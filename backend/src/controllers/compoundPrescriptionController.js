@@ -4,11 +4,13 @@ const { z } = require('zod');
 const compoundPrescriptionSchema = z.object({
   visitId: z.number().int().positive(),
   patientId: z.string().min(1),
-  formulationType: z.string().min(1),
+  prescriptionText: z.string().optional(),
+  rawText: z.string().optional(),
+  formulationType: z.string().optional(),
   baseType: z.string().optional(),
   customBase: z.string().optional(),
-  quantity: z.number().int().positive(),
-  quantityUnit: z.string().min(1),
+  quantity: z.number().int().positive().optional(),
+  quantityUnit: z.string().optional(),
   frequencyType: z.string().optional(),
   frequencyValue: z.string().optional(),
   durationValue: z.number().optional(),
@@ -25,7 +27,7 @@ const compoundPrescriptionSchema = z.object({
     isManualEntry: z.boolean().optional(),
     cost: z.number().optional(),
     sortOrder: z.number().optional()
-  })).min(1)
+  })).optional()
 });
 
 const compoundIngredientSchema = z.object({
@@ -55,11 +57,13 @@ exports.createCompoundPrescription = async (req, res) => {
         visitId: data.visitId,
         patientId: data.patientId,
         doctorId: doctorId,
-        formulationType: data.formulationType,
+        prescriptionText: data.prescriptionText || null,
+        rawText: data.rawText || data.prescriptionText || null,
+        formulationType: data.formulationType || 'CUSTOM',
         baseType: data.baseType || null,
         customBase: data.customBase || null,
-        quantity: data.quantity,
-        quantityUnit: data.quantityUnit,
+        quantity: data.quantity || null,
+        quantityUnit: data.quantityUnit || null,
         frequencyType: data.frequencyType || null,
         frequencyValue: data.frequencyValue || null,
         durationValue: data.durationValue || null,
@@ -70,7 +74,7 @@ exports.createCompoundPrescription = async (req, res) => {
         pharmacyNotes: data.pharmacyNotes || null,
         totalCost: data.totalCost || null,
         referenceNumber: referenceNumber,
-        ingredients: {
+        ingredients: data.ingredients ? {
           create: data.ingredients.map((ing, index) => ({
             ingredientName: ing.ingredientName,
             strength: ing.strength,
@@ -79,7 +83,7 @@ exports.createCompoundPrescription = async (req, res) => {
             cost: ing.cost || null,
             sortOrder: ing.sortOrder || index
           }))
-        }
+        } : undefined
       },
       include: {
         ingredients: {

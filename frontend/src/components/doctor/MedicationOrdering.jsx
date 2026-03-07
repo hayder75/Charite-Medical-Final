@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Plus, Trash2, Printer, Pill, AlertCircle, CheckCircle, Clock, Save, X } from 'lucide-react';
+import { Search, Plus, Trash2, Printer, Pill, AlertCircle, CheckCircle, Clock, Save, X, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -219,16 +219,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
       availableQuantity: medication.availableQuantity,
       unitPrice: medication.unitPrice,
       category: medication.category || 'TABLETS',
-      quantity: '',
-      frequencyType: '',
-      frequencyValue: '',
-      frequencyUnit: 'times',
-      frequencyUnitPer: 'day',
-      duration: '',
-      durationValue: '',
-      durationUnit: 'DAYS',
-      route: '',
-      instructions: '',
+      instructionText: '',
       isCustom: false
     };
     setSelectedMedications([...selectedMedications, newMedication]);
@@ -367,20 +358,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
       availableQuantity: 0,
       unitPrice: 0,
       category: 'TABLETS',
-      quantity: customMedication.quantity || (calculatedQty ? String(calculatedQty) : ''),
-      quantityNumeric: calculatedQty || null,
-      calculatedQuantity: calculatedQty,
-      quantityOverridden: !!customMedication.quantity,
-      frequencyType: customMedication.frequencyType,
-      frequencyValue: customMedication.frequencyValue,
-      frequencyUnit: customMedication.frequencyUnit,
-      frequencyText: customMedication.frequencyType ? FREQUENCY_TYPES[customMedication.frequencyType] : '',
-      duration: customMedication.durationValue ? `${customMedication.durationValue} ${DURATION_UNITS[customMedication.durationUnit]}` : '',
-      durationValue: customMedication.durationValue,
-      durationUnit: customMedication.durationUnit,
-      routeCode: customMedication.routeCode,
-      route: customMedication.routeCode,
-      instructions: customMedication.instructions,
+      instructionText: customMedication.instructions || '',
       isCustom: true
     };
 
@@ -461,23 +439,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
         dosageForm: med.dosageForm || 'Tablet',
         strength: med.strength || 'N/A',
         strengthText: med.strengthText || null,
-        quantity: med.quantity || null,
-        quantityNumeric: med.quantityNumeric || (med.quantity ? parseFloat(med.quantity) : null),
-        calculatedQuantity: med.calculatedQuantity || null,
-        finalQuantity: med.quantityOverridden ? (med.quantity ? parseFloat(med.quantity) : null) : (med.calculatedQuantity || null),
-        quantityOverridden: med.quantityOverridden || false,
-        frequencyType: med.frequencyType || null,
-        frequencyValue: med.frequencyValue ? parseFloat(med.frequencyValue) : null,
-        frequencyUnit: med.frequencyUnit || null,
-        frequencyText: med.frequencyText || null,
-        frequency: med.frequencyText || null,
-        duration: med.duration || null,
-        durationValue: med.durationValue ? parseFloat(med.durationValue) : null,
-        durationUnit: med.durationUnit || null,
-        durationText: med.duration || null,
-        routeCode: med.routeCode || null,
-        route: med.routeCode || null,
-        instructions: med.instructions || null,
+        instructionText: med.instructionText || med.instructions || null,
         additionalNotes: med.isCustom ? 'Custom medication - not in inventory' : '',
         category: med.category || 'TABLETS'
       }));
@@ -629,19 +591,14 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
             <div class="medications-section">
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, idx) => {
-        const cleanedName = formatMedicationName(med.name);
+        const cleanedName = (med.name || '').toUpperCase();
         const strength = med.strength && med.strength !== 'N/A' ? med.strength : '';
-        const instructionLine = formatMedicationInstruction(med);
-        const medInstructions = med.instructions || med.additionalNotes || '';
-        const note = (medInstructions && medInstructions !== 'Custom medication - not in inventory') ? medInstructions : '';
+        const instructionText = med.instructionText || med.instructions || '';
 
         return `
                 <div class="medication-item">
                   <div class="medication-name"># ${idx + 1}. ${cleanedName} ${strength}</div>
-                  <div class="medication-details" style="padding-left: 25px;">
-                    ${instructionLine}
-                    ${note ? `<div style="font-size: 11px; margin-top: 3px; color: #64748b; font-style: italic;">Note: ${note}</div>` : ''}
-                  </div>
+                  ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                 </div>
               `;
       }).join('')}
@@ -750,7 +707,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
 
         {showCustomForm && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 shadow-sm">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-indigo-900 mb-1">Medication Name *</label>
                 <div className="relative">
@@ -787,118 +744,21 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
                   placeholder="e.g. 500mg"
                 />
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-indigo-900 mb-1">Dosage Form</label>
-                <select
-                  value={customMedication.dosageForm}
-                  onChange={(e) => handleCustomFieldChange('dosageForm', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                >
-                  <option value="">Select</option>
-                  <option value="Tablet">Tablet</option>
-                  <option value="Capsule">Capsule</option>
-                  <option value="Syrup">Syrup</option>
-                  <option value="Suspension">Suspension</option>
-                  <option value="Injection">Injection</option>
-                  <option value="Cream">Cream</option>
-                  <option value="Ointment">Ointment</option>
-                  <option value="Drops">Drops</option>
-                  <option value="Inhaler">Inhaler</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-indigo-900 mb-1">Category</label>
-                <select
-                  value={customMedication.category}
-                  onChange={(e) => handleCustomFieldChange('category', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                >
-                  <option value="">Select</option>
-                  <option value="Analgesic">Analgesic</option>
-                  <option value="Antibiotic">Antibiotic</option>
-                  <option value="Antipyretic">Antipyretic</option>
-                  <option value="Anti-inflammatory">Anti-inflammatory</option>
-                  <option value="Antihistamine">Antihistamine</option>
-                  <option value="Antiviral">Antiviral</option>
-                  <option value="Antifungal">Antifungal</option>
-                  <option value="Cardiovascular">Cardiovascular</option>
-                  <option value="Respiratory">Respiratory</option>
-                  <option value="Gastrointestinal">Gastrointestinal</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-indigo-900 mb-1">Type</label>
-                <select
-                  value={customMedication.type}
-                  onChange={(e) => handleCustomFieldChange('type', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                >
-                  <option value="">Select</option>
-                  <option value="Generic">Generic</option>
-                  <option value="Brand">Brand</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-indigo-900 mb-1">Unit</label>
-                <select
-                  value={customMedication.unit}
-                  onChange={(e) => handleCustomFieldChange('unit', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                >
-                  <option value="UNIT">UNIT</option>
-                  <option value="ML">ML</option>
-                  <option value="MG">MG</option>
-                  <option value="G">G</option>
-                </select>
-              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-              <div>
-                <label className="block text-sm font-bold text-indigo-900 mb-1.5">Duration</label>
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    min="1"
-                    value={customMedication.durationValue}
-                    onChange={(e) => handleCustomFieldChange('durationValue', e.target.value)}
-                    className="w-24 px-4 py-2.5 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
-                    placeholder="e.g. 7"
-                  />
-                  <select
-                    value={customMedication.durationUnit}
-                    onChange={(e) => handleCustomFieldChange('durationUnit', e.target.value)}
-                    className="flex-1 px-4 py-2.5 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
-                  >
-                    {Object.entries(DURATION_UNITS).map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+            <div className="mt-4">
+              <label className="block text-sm font-bold text-indigo-900 mb-1.5">Instructions (Quantity, Frequency, Duration, Route)</label>
+              <textarea
+                value={customMedication.instructions}
+                onChange={(e) => handleCustomFieldChange('instructions', e.target.value)}
+                className="w-full px-4 py-2.5 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
+                placeholder="e.g. Take 1 tablet twice daily for 7 days after meals"
+                rows={3}
+              />
+            </div>
 
-              <div>
-                <label className="block text-sm font-bold text-indigo-900 mb-1.5">
-                  Quantity {calculatedQuantity && !customMedication.quantity && <span className="text-green-600 text-xs">(Auto: {calculatedQuantity})</span>}
-                </label>
-                <input
-                  type="text"
-                  value={customMedication.quantity}
-                  onChange={(e) => handleCustomFieldChange('quantity', e.target.value)}
-                  className="w-full px-4 py-2.5 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
-                  placeholder={calculatedQuantity ? `Auto-calculated: ${calculatedQuantity}` : 'e.g. 30 tablets'}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-indigo-900 mb-1.5">Instructions</label>
-                <input
+            <div className="flex flex-wrap gap-3 pt-4 mt-4 border-t border-indigo-200">
+              <button
                   type="text"
                   value={customMedication.instructions}
                   onChange={(e) => handleCustomFieldChange('instructions', e.target.value)}
@@ -972,72 +832,28 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               </div>
 
               {medication.isCustom ? (
-                <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-lg grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                   <div>
-                    <span className="block text-gray-500 font-semibold uppercase text-[10px]">Quantity</span>
-                    <span className="text-blue-900 font-bold">{medication.quantity || 'N/A'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 font-semibold uppercase text-[10px]">Frequency</span>
-                    <span className="text-blue-900 font-bold">{medication.frequencyText || 'N/A'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 font-semibold uppercase text-[10px]">Duration</span>
-                    <span className="text-blue-900 font-bold">{medication.duration || 'N/A'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-500 font-semibold uppercase text-[10px]">Route</span>
-                    <span className="text-blue-900 font-bold">{ROUTES[medication.routeCode] || medication.route || 'N/A'}</span>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                    <textarea
+                      value={medication.instructionText}
+                      onChange={(e) => updateMedication(index, 'instructionText', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder="e.g. Take 1 tablet twice daily for 7 days after meals"
+                      rows={2}
+                    />
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                    <input
-                      type="text"
-                      value={medication.quantity}
-                      onChange={(e) => updateMedication(index, 'quantity', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="e.g. 30"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
-                    <select
-                      value={medication.frequencyType}
-                      onChange={(e) => updateMedication(index, 'frequencyType', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select</option>
-                      {Object.entries(FREQUENCY_TYPES).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
-                    <input
-                      type="text"
-                      value={medication.duration}
-                      onChange={(e) => updateMedication(index, 'duration', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="e.g. 7 days"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Route</label>
-                    <select
-                      value={medication.routeCode}
-                      onChange={(e) => updateMedication(index, 'routeCode', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select</option>
-                      {Object.entries(ROUTES).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="mt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                  <textarea
+                    value={medication.instructionText}
+                    onChange={(e) => updateMedication(index, 'instructionText', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. Take 1 tablet twice daily for 7 days after meals"
+                    rows={2}
+                  />
                 </div>
               )}
             </div>
@@ -1073,9 +889,11 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <div key={idx} className="p-3 bg-gray-50 border rounded-lg flex justify-between items-center">
                 <div className="flex-1">
                   <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.name)} {order.strength && order.strength !== 'N/A' ? order.strength : ''}</p>
-                  <p className="text-xs text-gray-600 ml-4 italic">
-                    {formatMedicationInstruction(order)}
-                  </p>
+                  {order.instructionText && (
+                    <p className="text-xs text-gray-600 ml-4 italic">
+                      {order.instructionText}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-bold text-blue-600 uppercase">{order.status}</span>

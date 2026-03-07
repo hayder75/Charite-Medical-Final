@@ -480,6 +480,7 @@ model MedicationOrder {
   dosageForm           String
   strength             String
   strengthText         String?
+  instructionText      String?
   quantity             String?
   quantityNumeric      Float?
   calculatedQuantity   Float?
@@ -524,16 +525,20 @@ model CompoundPrescription {
   patientId             String
   doctorId              String
 
+  // Free-text prescription (new simplified format)
+  prescriptionText      String?
+  rawText               String?
+
   // Formulation
-  formulationType       String    // CREAM, OINTMENT, GEL, LOTION, FOAM, SOLUTION
+  formulationType       String?   // CREAM, OINTMENT, GEL, LOTION, FOAM, SOLUTION
 
   // Base
   baseType             String?
   customBase           String?
 
   // Quantity
-  quantity             Int
-  quantityUnit         String    // g, ml
+  quantity             Int?
+  quantityUnit         String?   // g, ml
 
   // Directions
   frequencyType        String?

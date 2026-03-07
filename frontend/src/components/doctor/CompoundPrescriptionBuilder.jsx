@@ -1,99 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Printer, Save, Beaker, AlertCircle, Search, Clock, Edit, X } from 'lucide-react';
+import { Plus, Trash2, Printer, Save, Beaker, AlertCircle, Bold, Italic, Underline, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
-
-const FORMULATION_TYPES = [
-  { value: 'CREAM', label: 'Cream' },
-  { value: 'OINTMENT', label: 'Ointment' },
-  { value: 'GEL', label: 'Gel' },
-  { value: 'LOTION', label: 'Lotion' },
-  { value: 'FOAM', label: 'Foam' },
-  { value: 'SOLUTION', label: 'Solution' }
-];
-
-const BASE_TYPES = [
-  { value: 'CREAM_BASE', label: 'Cream Base' },
-  { value: 'OINTMENT_BASE', label: 'Ointment Base' },
-  { value: 'PETROLATUM', label: 'Petrolatum' },
-  { value: 'CUSTOM', label: 'Custom Base' }
-];
-
-const STRENGTH_UNITS = [
-  { value: '%', label: '%' },
-  { value: 'MG/G', label: 'mg/g' },
-  { value: 'MG/ML', label: 'mg/ml' }
-];
-
-const FREQUENCY_TYPES = [
-  { value: 'ONCE_DAILY', label: 'Once Daily' },
-  { value: 'TWICE_DAILY', label: 'Twice Daily' },
-  { value: 'THREE_TIMES_DAILY', label: 'Three Times Daily' },
-  { value: 'FOUR_TIMES_DAILY', label: 'Four Times Daily' },
-  { value: 'AS_NEEDED', label: 'As Needed (PRN)' },
-  { value: 'NIGHT_ONLY', label: 'Night Only' },
-  { value: 'CUSTOM', label: 'Custom' }
-];
-
-const DURATION_UNITS = [
-  { value: 'DAYS', label: 'Days' },
-  { value: 'WEEKS', label: 'Weeks' },
-  { value: 'MONTHS', label: 'Months' }
-];
-
-const QUANTITY_UNITS = [
-  { value: 'G', label: 'g' },
-  { value: 'ML', label: 'ml' }
-];
-
-const STORAGE_OPTIONS = [
-  { value: 'ROOM_TEMP', label: 'Store at Room Temperature (below 25°C)' },
-  { value: 'COOL', label: 'Store in Cool Place (2-8°C)' },
-  { value: 'REFRIGERATE', label: 'Refrigerate (2-8°C)' },
-  { value: 'PROTECT_LIGHT', label: 'Protect from Light' },
-  { value: 'DRY_PLACE', label: 'Store in Dry Place' }
-];
 
 const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [existingPrescriptions, setExistingPrescriptions] = useState([]);
   const [showNewForm, setShowNewForm] = useState(false);
-  const [medications, setMedications] = useState([]);
-  const [medicationSearch, setMedicationSearch] = useState('');
-  const [searching, setSearching] = useState(false);
-
-  // Ingredient search state
-  const [ingredientSearch, setIngredientSearch] = useState('');
-  const [ingredientResults, setIngredientResults] = useState([]);
-  const [searchingIngredient, setSearchingIngredient] = useState(false);
-  const [activeIngredientIndex, setActiveIngredientIndex] = useState(null);
   const [editingPrescription, setEditingPrescription] = useState(null);
 
   const [formData, setFormData] = useState({
-    formulationType: 'CREAM',
-    baseType: '',
-    customBase: '',
-    quantity: 30,
-    quantityUnit: 'G',
-    frequencyType: 'TWICE_DAILY',
-    frequencyValue: '',
-    durationValue: '',
-    durationUnit: 'WEEKS',
-    instructions: '',
-    storageInstructions: '',
-    warnings: '',
-    pharmacyNotes: '',
-    ingredients: [
-      { ingredientName: '', strength: '', unit: '%', isManualEntry: true, sortOrder: 0 }
-    ]
+    prescriptionText: ''
   });
 
   useEffect(() => {
     if (visit?.id) {
       fetchExistingPrescriptions();
     }
-    searchMedications('');
   }, [visit]);
 
   const fetchExistingPrescriptions = async () => {
@@ -108,117 +32,9 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
     }
   };
 
-  const searchMedications = async (query) => {
-    try {
-      setSearching(true);
-      const response = await api.get('/medications/search', {
-        params: { search: query, limit: 20 }
-      });
-      setMedications(response.data.medications || []);
-    } catch (error) {
-      console.error('Error searching medications:', error);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const searchIngredients = async (query) => {
-    if (!query || query.length < 1) {
-      setIngredientResults([]);
-      return;
-    }
-    try {
-      setSearchingIngredient(true);
-      const response = await api.get('/medications/search', {
-        params: { search: query, limit: 10 }
-      });
-      setIngredientResults(response.data.medications || []);
-    } catch (error) {
-      console.error('Error searching ingredients:', error);
-    } finally {
-      setSearchingIngredient(false);
-    }
-  };
-
-  const handleIngredientSearchChange = (index, value) => {
-    setIngredientSearch(value);
-    setActiveIngredientIndex(index);
-    searchIngredients(value);
-
-    // Update formData immediately so it's not empty if they don't select from drop down
-    setFormData(prev => {
-      const newIngredients = [...prev.ingredients];
-      newIngredients[index] = { ...newIngredients[index], ingredientName: value };
-      return { ...prev, ingredients: newIngredients };
-    });
-  };
-
-  const selectIngredient = (index, medication) => {
-    setFormData(prev => {
-      const newIngredients = [...prev.ingredients];
-      newIngredients[index] = {
-        ...newIngredients[index],
-        ingredientName: medication.name,
-        isManualEntry: false
-      };
-      return { ...prev, ingredients: newIngredients };
-    });
-    setIngredientSearch('');
-    setIngredientResults([]);
-    setActiveIngredientIndex(null);
-  };
-
-  const handleIngredientChange = (index, field, value) => {
-    setFormData(prev => {
-      const newIngredients = [...prev.ingredients];
-      newIngredients[index] = { ...newIngredients[index], [field]: value };
-      return { ...prev, ingredients: newIngredients };
-    });
-  };
-
-  const addIngredient = () => {
-    setFormData({
-      ...formData,
-      ingredients: [
-        ...formData.ingredients,
-        { ingredientName: '', strength: '', unit: '%', isManualEntry: true, sortOrder: formData.ingredients.length }
-      ]
-    });
-  };
-
-  const removeIngredient = (index) => {
-    if (formData.ingredients.length === 1) {
-      toast.error('At least one ingredient is required');
-      return;
-    }
-    const newIngredients = formData.ingredients.filter((_, i) => i !== index);
-    setFormData({ ...formData, ingredients: newIngredients });
-  };
-
-  const selectMedication = (index, medication) => {
-    const newIngredients = [...formData.ingredients];
-    newIngredients[index] = {
-      ...newIngredients[index],
-      ingredientName: medication.name,
-      isManualEntry: false,
-      sortOrder: index
-    };
-    setFormData({ ...formData, ingredients: newIngredients });
-    setMedicationSearch('');
-  };
-
   const validateForm = () => {
-    if (!formData.formulationType) {
-      toast.error('Please select a formulation type');
-      return false;
-    }
-    if (!formData.quantity || formData.quantity <= 0) {
-      toast.error('Please enter a valid quantity');
-      return false;
-    }
-    const validIngredients = formData.ingredients.filter(ing => ing.ingredientName.trim() && ing.strength);
-    if (validIngredients.length === 0) {
-      toast.error('Please add at least one ingredient with name and strength');
+    if (!formData.prescriptionText.trim()) {
+      toast.error('Please enter prescription details');
       return false;
     }
     return true;
@@ -234,28 +50,8 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       const payload = {
         visitId: visit.id,
         patientId: visit.patient.id,
-        formulationType: formData.formulationType,
-        baseType: formData.baseType || undefined,
-        customBase: formData.customBase || undefined,
-        quantity: parseInt(formData.quantity),
-        quantityUnit: formData.quantityUnit,
-        frequencyType: formData.frequencyType || undefined,
-        frequencyValue: formData.frequencyValue || undefined,
-        durationValue: formData.durationValue ? parseFloat(formData.durationValue) : undefined,
-        durationUnit: formData.durationUnit || undefined,
-        instructions: formData.instructions || undefined,
-        storageInstructions: formData.storageInstructions || undefined,
-        warnings: formData.warnings || undefined,
-        pharmacyNotes: formData.pharmacyNotes || undefined,
-        ingredients: formData.ingredients
-          .filter(ing => ing.ingredientName.trim() && ing.strength)
-          .map((ing, index) => ({
-            ingredientName: ing.ingredientName,
-            strength: parseFloat(ing.strength),
-            unit: ing.unit,
-            isManualEntry: ing.isManualEntry,
-            sortOrder: index
-          }))
+        prescriptionText: formData.prescriptionText,
+        rawText: formData.prescriptionText
       };
 
       if (editingPrescription) {
@@ -268,22 +64,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
 
       setShowNewForm(false);
       setEditingPrescription(null);
-      setFormData({
-        formulationType: 'CREAM',
-        baseType: '',
-        customBase: '',
-        quantity: 30,
-        quantityUnit: 'G',
-        frequencyType: 'TWICE_DAILY',
-        frequencyValue: '',
-        durationValue: '',
-        durationUnit: 'WEEKS',
-        instructions: '',
-        storageInstructions: '',
-        warnings: '',
-        pharmacyNotes: '',
-        ingredients: [{ ingredientName: '', strength: '', unit: '%', isManualEntry: true, sortOrder: 0 }]
-      });
+      setFormData({ prescriptionText: '' });
       fetchExistingPrescriptions();
       if (onSaved) onSaved();
     } catch (error) {
@@ -294,39 +75,9 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
     }
   };
 
-  const formatDirections = (prescription) => {
-    const parts = [];
-    const freqLabel = FREQUENCY_TYPES.find(f => f.value === prescription.frequencyType)?.label;
-    if (freqLabel) parts.push(freqLabel);
-    if (prescription.durationValue) {
-      const durLabel = DURATION_UNITS.find(d => d.value === prescription.durationUnit)?.label;
-      parts.push(`for ${prescription.durationValue} ${durLabel}`);
-    }
-    return parts.join(' - ');
-  };
-
   const handleEdit = (prescription) => {
     setFormData({
-      formulationType: prescription.formulationType,
-      baseType: prescription.baseType || '',
-      customBase: prescription.customBase || '',
-      quantity: prescription.quantity,
-      quantityUnit: prescription.quantityUnit,
-      frequencyType: prescription.frequencyType || 'TWICE_DAILY',
-      frequencyValue: prescription.frequencyValue || '',
-      durationValue: prescription.durationValue || '',
-      durationUnit: prescription.durationUnit || 'WEEKS',
-      instructions: prescription.instructions || '',
-      storageInstructions: prescription.storageInstructions || '',
-      warnings: prescription.warnings || '',
-      pharmacyNotes: prescription.pharmacyNotes || '',
-      ingredients: prescription.ingredients.map((ing, idx) => ({
-        ingredientName: ing.ingredientName,
-        strength: ing.strength.toString(),
-        unit: ing.unit,
-        isManualEntry: ing.isManualEntry,
-        sortOrder: idx
-      }))
+      prescriptionText: prescription.prescriptionText || prescription.rawText || ''
     });
     setEditingPrescription(prescription);
     setShowNewForm(true);
@@ -343,6 +94,49 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       console.error('Error deleting prescription:', error);
       toast.error(error.response?.data?.error || 'Failed to delete prescription');
     }
+  };
+
+  const insertFormatting = (format) => {
+    const textarea = document.getElementById('prescription-textarea');
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = formData.prescriptionText;
+    const selectedText = text.substring(start, end);
+
+    let formattedText = '';
+    switch (format) {
+      case 'bold':
+        formattedText = `**${selectedText}**`;
+        break;
+      case 'italic':
+        formattedText = `*${selectedText}*`;
+        break;
+      case 'underline':
+        formattedText = `__${selectedText}__`;
+        break;
+      default:
+        formattedText = selectedText;
+    }
+
+    const newText = text.substring(0, start) + formattedText + text.substring(end);
+    setFormData({ ...formData, prescriptionText: newText });
+
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + 1, end + 1);
+    }, 0);
+  };
+
+  const parseFormatting = (text) => {
+    if (!text) return '';
+    let parsed = text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/__(.*?)__/g, '<u>$1</u>')
+      .replace(/\n/g, '<br>');
+    return parsed;
   };
 
   const printAllPrescriptions = async () => {
@@ -369,21 +163,16 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       }
 
       const prescriptionsHtml = existingPrescriptions.map((prescription, idx) => {
-        const formulationLabel = FORMULATION_TYPES.find(f => f.value === prescription.formulationType)?.label || prescription.formulationType;
-        const baseLabel = prescription.baseType === 'CUSTOM' ? prescription.customBase : BASE_TYPES.find(b => b.value === prescription.baseType)?.label || '';
-        const directions = formatDirections(prescription);
+        const text = prescription.prescriptionText || prescription.rawText || '';
+        const parsedText = parseFormatting(text);
 
         return `
           <div style="margin-bottom: 15px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 4px; page-break-inside: avoid;">
             <div style="font-weight: bold; font-size: 12px; margin-bottom: 5px; color: #1e40af;">
-              #${idx + 1}. ${formulationLabel} - ${prescription.quantity}${prescription.quantityUnit} (${prescription.referenceNumber})
+              #${idx + 1}. Compound Prescription ${prescription.referenceNumber ? `(${prescription.referenceNumber})` : ''}
             </div>
-            <div style="font-size: 11px; margin-bottom: 3px;">
-              <strong>Ingredients:</strong> ${prescription.ingredients.map(ing => `${ing.ingredientName} ${ing.strength}${ing.unit}`).join(', ')}
-            </div>
-            ${baseLabel ? `<div style="font-size: 11px; margin-bottom: 3px;"><strong>Base:</strong> ${baseLabel}</div>` : ''}
-            <div style="font-size: 11px;">
-              <strong>Sig:</strong> ${directions}${prescription.instructions ? ` - ${prescription.instructions}` : ''}
+            <div style="font-size: 11px; line-height: 1.6;">
+              ${parsedText}
             </div>
           </div>
         `;
@@ -486,9 +275,8 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
         return;
       }
 
-      const formulationLabel = FORMULATION_TYPES.find(f => f.value === prescription.formulationType)?.label || prescription.formulationType;
-      const baseLabel = prescription.baseType === 'CUSTOM' ? prescription.customBase : BASE_TYPES.find(b => b.value === prescription.baseType)?.label || '';
-      const directions = formatDirections(prescription);
+      const text = prescription.prescriptionText || prescription.rawText || '';
+      const parsedText = parseFormatting(text);
 
       const content = `
         <!DOCTYPE html>
@@ -519,12 +307,10 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
               .medications-section h3 { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 2px; }
               .medication-item { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; width: 100%; }
               .medication-name { font-weight: 700; font-size: 12px; color: #0f172a; margin-bottom: 2px; }
-              .medication-details { font-size: 11px; color: #334155; font-weight: 500; }
+              .medication-details { font-size: 11px; color: #334155; font-weight: 500; line-height: 1.6; }
               .footer { margin-top: auto; padding-top: 10px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; }
               .doctor-name { font-weight: 700; color: #1e293b; font-size: 11px; }
               .signature-box { width: 100px; border-top: 1px solid #334155; padding-top: 4px; text-align: center; font-size: 8px; color: #64748b; }
-              .compound-info { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 8px; margin-bottom: 10px; font-size: 11px; }
-              .compound-info strong { color: #92400e; }
               .external-warning { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 6px 10px; border-radius: 4px; font-size: 10px; font-weight: bold; text-align: center; margin-bottom: 10px; }
             </style>
           </head>
@@ -559,25 +345,10 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
                 ⚠ FOR EXTERNAL USE ONLY
               </div>
 
-              <div class="compound-info">
-                <strong>Compound Preparation:</strong> ${formulationLabel}${baseLabel ? ` - ${baseLabel}` : ''} | Qty: ${prescription.quantity}${prescription.quantityUnit}
-              </div>
-
               <div class="medications-section">
-                <h3>Active Ingredients</h3>
-                ${prescription.ingredients.map((ing, idx) => `
-                  <div class="medication-item">
-                    <div class="medication-name"># ${idx + 1}. ${ing.ingredientName} ${ing.strength}${ing.unit}</div>
-                  </div>
-                `).join('')}
-              </div>
-
-              <div class="medications-section">
-                <h3>Directions</h3>
+                <h3>Compound Prescription</h3>
                 <div class="medication-item">
-                  <div class="medication-details">${directions}</div>
-                  ${prescription.instructions ? `<div style="font-size: 11px; margin-top: 3px; color: #64748b; font-style: italic;">${prescription.instructions}</div>` : ''}
-                  ${prescription.storageInstructions ? `<div style="font-size: 10px; margin-top: 3px; color: #64748b;">Storage: ${STORAGE_OPTIONS.find(s => s.value === prescription.storageInstructions)?.label || prescription.storageInstructions}</div>` : ''}
+                  <div class="medication-details">${parsedText}</div>
                 </div>
               </div>
 
@@ -611,7 +382,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
             Compound Prescriptions
           </h3>
           <p className="text-sm text-gray-600">
-            Create compounded topical preparations for dermatology
+            Write compound prescription details
           </p>
         </div>
         {!showNewForm && (
@@ -627,286 +398,85 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
 
       {showNewForm && (
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Section A: Formulation Type */}
           <div className="card p-4">
             <h4 className="font-semibold mb-4 flex items-center">
               <Beaker className="h-5 w-5 mr-2 text-blue-600" />
-              Formulation Type
+              Compound Prescription Details
             </h4>
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
-              {FORMULATION_TYPES.map(type => (
-                <label
-                  key={type.value}
-                  className={`p-3 border-2 rounded-lg cursor-pointer text-center transition-all ${formData.formulationType === type.value
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                >
-                  <input
-                    type="radio"
-                    name="formulationType"
-                    value={type.value}
-                    checked={formData.formulationType === type.value}
-                    onChange={(e) => setFormData({ ...formData, formulationType: e.target.value })}
-                    className="sr-only"
-                  />
-                  <span className="text-sm font-medium">{type.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Section B: Active Ingredients */}
-          <div className="card p-4">
-            <div className="flex justify-between items-center mb-4">
-              <h4 className="font-semibold flex items-center">
-                <Plus className="h-5 w-5 mr-2 text-green-600" />
-                Active Ingredients
-              </h4>
+            
+            <div className="flex items-center gap-2 mb-3">
               <button
                 type="button"
-                onClick={addIngredient}
-                className="text-sm text-blue-600 hover:text-blue-700 flex items-center"
+                onClick={() => insertFormatting('bold')}
+                className="p-2 border border-gray-300 rounded hover:bg-gray-100"
+                title="Bold"
               >
-                <Plus className="h-4 w-4 mr-1" />
-                Add Ingredient
+                <Bold className="h-4 w-4" />
               </button>
-            </div>
-
-            <div className="space-y-3">
-              {formData.ingredients.map((ingredient, index) => (
-                <div key={index} className="relative flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-600 mb-1 block">Ingredient Name</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={activeIngredientIndex === index ? ingredientSearch : ingredient.ingredientName}
-                        onChange={(e) => handleIngredientSearchChange(index, e.target.value)}
-                        onFocus={() => {
-                          setActiveIngredientIndex(index);
-                          setIngredientSearch(ingredient.ingredientName || '');
-                          if (ingredient.ingredientName) searchIngredients(ingredient.ingredientName);
-                        }}
-                        onBlur={() => setTimeout(() => {
-                          if (activeIngredientIndex === index) {
-                            setActiveIngredientIndex(null);
-                            setIngredientResults([]);
-                          }
-                        }, 200)}
-                        placeholder="Search or enter ingredient"
-                        className="input w-full"
-                      />
-                      {searchingIngredient && activeIngredientIndex === index && (
-                        <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                        </div>
-                      )}
-                      {activeIngredientIndex === index && ingredientResults.length > 0 && (
-                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                          {ingredientResults.map((med) => (
-                            <button
-                              key={med.id}
-                              type="button"
-                              onClick={() => selectIngredient(index, med)}
-                              className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-b-0"
-                            >
-                              <div className="font-medium text-sm">{med.name}</div>
-                              <div className="text-xs text-gray-500">{med.strength} {med.dosageForm}</div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    {ingredient.ingredientName && !ingredient.isManualEntry && (
-                      <span className="text-xs text-green-600">From catalog</span>
-                    )}
-                    {ingredient.ingredientName && ingredient.isManualEntry && (
-                      <span className="text-xs text-gray-500">Custom entry</span>
-                    )}
-                  </div>
-                  <div className="w-24">
-                    <label className="text-xs text-gray-600 mb-1 block">Strength</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={ingredient.strength}
-                      onChange={(e) => handleIngredientChange(index, 'strength', e.target.value)}
-                      placeholder="0"
-                      className="input w-full"
-                    />
-                  </div>
-                  <div className="w-20">
-                    <label className="text-xs text-gray-600 mb-1 block">Unit</label>
-                    <select
-                      value={ingredient.unit}
-                      onChange={(e) => handleIngredientChange(index, 'unit', e.target.value)}
-                      className="input w-full"
-                    >
-                      {STRENGTH_UNITS.map(unit => (
-                        <option key={unit.value} value={unit.value}>{unit.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="pt-6">
-                    <button
-                      type="button"
-                      onClick={() => removeIngredient(index)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded"
-                      disabled={formData.ingredients.length === 1}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {formData.ingredients.length === 0 && (
-              <p className="text-red-500 text-sm mt-2">At least one ingredient is required</p>
-            )}
-          </div>
-
-          {/* Section C: Base / Vehicle */}
-          <div className="card p-4">
-            <h4 className="font-semibold mb-4">Base / Vehicle</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-              {BASE_TYPES.map(base => (
-                <label
-                  key={base.value}
-                  className={`p-3 border-2 rounded-lg cursor-pointer text-center transition-all ${formData.baseType === base.value
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                >
-                  <input
-                    type="radio"
-                    name="baseType"
-                    value={base.value}
-                    checked={formData.baseType === base.value}
-                    onChange={(e) => setFormData({ ...formData, baseType: e.target.value })}
-                    className="sr-only"
-                  />
-                  <span className="text-sm font-medium">{base.label}</span>
-                </label>
-              ))}
-            </div>
-            {formData.baseType === 'CUSTOM' && (
-              <input
-                type="text"
-                value={formData.customBase}
-                onChange={(e) => setFormData({ ...formData, customBase: e.target.value })}
-                placeholder="Enter custom base description"
-                className="input"
-              />
-            )}
-          </div>
-
-          {/* Section D: Total Quantity */}
-          <div className="card p-4">
-            <h4 className="font-semibold mb-4">Total Quantity</h4>
-            <div className="flex items-center gap-3">
-              <div className="w-32">
-                <input
-                  type="number"
-                  value={formData.quantity}
-                  onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-                  className="input"
-                  min="1"
-                />
-              </div>
-              <select
-                value={formData.quantityUnit}
-                onChange={(e) => setFormData({ ...formData, quantityUnit: e.target.value })}
-                className="input w-24"
+              <button
+                type="button"
+                onClick={() => insertFormatting('italic')}
+                className="p-2 border border-gray-300 rounded hover:bg-gray-100"
+                title="Italic"
               >
-                {QUANTITY_UNITS.map(unit => (
-                  <option key={unit.value} value={unit.value}>{unit.label}</option>
-                ))}
-              </select>
+                <Italic className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => insertFormatting('underline')}
+                className="p-2 border border-gray-300 rounded hover:bg-gray-100"
+                title="Underline"
+              >
+                <Underline className="h-4 w-4" />
+              </button>
+              <span className="text-xs text-gray-500 ml-2">
+                Use **text** for bold, *text* for italic, __text__ for underline
+              </span>
             </div>
-          </div>
 
-          {/* Section E: Directions */}
-          <div className="card p-4">
-            <h4 className="font-semibold mb-4">Directions for Use</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="label">Frequency</label>
-                <select
-                  value={formData.frequencyType}
-                  onChange={(e) => setFormData({ ...formData, frequencyType: e.target.value })}
-                  className="input"
-                >
-                  {FREQUENCY_TYPES.map(freq => (
-                    <option key={freq.value} value={freq.value}>{freq.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="label">Duration</label>
-                <div className="flex">
-                  <input
-                    type="number"
-                    value={formData.durationValue}
-                    onChange={(e) => setFormData({ ...formData, durationValue: e.target.value })}
-                    placeholder="4"
-                    className="input rounded-r-none"
-                    min="1"
-                  />
-                  <select
-                    value={formData.durationUnit}
-                    onChange={(e) => setFormData({ ...formData, durationUnit: e.target.value })}
-                    className="input rounded-l-none border-l-0"
-                  >
-                    {DURATION_UNITS.map(unit => (
-                      <option key={unit.value} value={unit.value}>{unit.label}</option>
-                    ))}
-                  </select>
+            <textarea
+              id="prescription-textarea"
+              value={formData.prescriptionText}
+              onChange={(e) => setFormData({ ...formData, prescriptionText: e.target.value })}
+              placeholder={`#1. Cream - 30g
+Ingredients: Hydrocortisone 1%, Salicylic acid 3%
+Base: Cream base
+Directions: Apply thin layer to affected area twice daily for 2 weeks
+Store at room temperature
+
+#2. Ointment - 15g
+Ingredients: Mometasone furoate 0.1%
+Base: Petrolatum
+Directions: Apply once daily at night
+For external use only`}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+              rows={15}
+            />
+
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-yellow-800">
+                  <p className="font-semibold">Formatting Tips:</p>
+                  <ul className="list-disc list-inside mt-1 space-y-1">
+                    <li>Start each prescription with <strong>#1.</strong>, <strong>#2.</strong>, etc.</li>
+                    <li>Press Enter for new lines (they will be preserved when printing)</li>
+                    <li>Use <strong>**text**</strong> for <strong>bold</strong></li>
+                    <li>Use <strong>*text*</strong> for <em>italic</em></li>
+                    <li>Use <strong>__text__</strong> for <u>underline</u></li>
+                  </ul>
                 </div>
               </div>
-              <div>
-                <label className="label">Storage Instructions</label>
-                <select
-                  value={formData.storageInstructions}
-                  onChange={(e) => setFormData({ ...formData, storageInstructions: e.target.value })}
-                  className="input"
-                >
-                  <option value="">Select...</option>
-                  {STORAGE_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="mt-4">
-              <label className="label">Additional Instructions</label>
-              <textarea
-                value={formData.instructions}
-                onChange={(e) => setFormData({ ...formData, instructions: e.target.value })}
-                placeholder="Apply thin layer to affected area..."
-                className="input"
-                rows={2}
-              />
-            </div>
-            <div className="mt-4">
-              <label className="label">Warnings (Optional)</label>
-              <textarea
-                value={formData.warnings}
-                onChange={(e) => setFormData({ ...formData, warnings: e.target.value })}
-                placeholder="Any special warnings..."
-                className="input"
-                rows={2}
-              />
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="flex justify-end space-x-3">
             <button
               type="button"
               onClick={() => {
                 setShowNewForm(false);
                 setEditingPrescription(null);
+                setFormData({ prescriptionText: '' });
               }}
               className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
             >
@@ -933,7 +503,6 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
         </form>
       )}
 
-      {/* Existing Prescriptions */}
       {!showNewForm && (
         <div className="space-y-4">
           {loading ? (
@@ -964,16 +533,10 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-blue-700">#{idx + 1}</span>
-                        <span className="font-medium">{FORMULATION_TYPES.find(f => f.value === prescription.formulationType)?.label}</span>
-                        <span className="text-gray-600">- {prescription.quantity}{prescription.quantityUnit}</span>
                         <span className="text-xs text-gray-400">({prescription.referenceNumber})</span>
                       </div>
-                      <div className="text-sm text-gray-600 mt-1">
-                        {prescription.ingredients.map(ing => ing.ingredientName).join(' + ')} {prescription.ingredients.length > 0 ? `(${prescription.ingredients.map(ing => `${ing.strength}${ing.unit}`).join(', ')})` : ''}
-                      </div>
-                      <div className="text-sm text-gray-500 mt-1">
-                        Sig: {FREQUENCY_TYPES.find(f => f.value === prescription.frequencyType)?.label}{prescription.durationValue ? ` x ${prescription.durationValue} ${DURATION_UNITS.find(d => d.value === prescription.durationUnit)?.label}` : ''}
-                        {prescription.instructions && ` - ${prescription.instructions}`}
+                      <div className="text-sm text-gray-600 mt-1 whitespace-pre-wrap font-mono">
+                        {prescription.prescriptionText || prescription.rawText}
                       </div>
                     </div>
                     <div className="flex space-x-1">
@@ -982,7 +545,9 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
                         className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
                         title="Edit"
                       >
-                        <Edit className="h-4 w-4" />
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z" />
+                        </svg>
                       </button>
                       <button
                         onClick={() => handleDelete(prescription.id)}
