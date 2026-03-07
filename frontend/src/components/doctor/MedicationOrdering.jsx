@@ -302,10 +302,6 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
       toast.error('Please enter medication name');
       return;
     }
-    if (!customMedication.dosageForm) {
-      toast.error('Please select dosage form');
-      return;
-    }
     if (!customMedication.strength.trim()) {
       toast.error('Please enter medication strength');
       return;
@@ -755,17 +751,6 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
                 placeholder="e.g. Take 1 tablet twice daily for 7 days after meals"
                 rows={3}
               />
-            </div>
-
-            <div className="flex flex-wrap gap-3 pt-4 mt-4 border-t border-indigo-200">
-              <button
-                  type="text"
-                  value={customMedication.instructions}
-                  onChange={(e) => handleCustomFieldChange('instructions', e.target.value)}
-                  className="w-full px-4 py-2.5 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
-                  placeholder="e.g. Take after meals"
-                />
-              </div>
             </div>
 
             <div className="flex flex-wrap gap-3 pt-4 mt-4 border-t border-indigo-200">
