@@ -604,7 +604,7 @@ const PatientHistory = () => {
                                       </div>
                                       <div>
                                         <p className="text-gray-500">Instructions</p>
-                                        <p className="font-medium">{order.instructions || 'N/A'}</p>
+                                        <p className="font-medium">{order.instructionText || order.instructions || 'N/A'}</p>
                                       </div>
                                     </div>
                                     {order.additionalNotes && (

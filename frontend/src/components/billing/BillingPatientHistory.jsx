@@ -1256,10 +1256,10 @@ const BillingPatientHistory = () => {
                                   <span className="font-bold text-blue-600 uppercase text-[10px]">Sig:</span>
                                   {instruction}
                                 </div>
-                                {med.instructions && (
+                                {(med.instructionText || med.instructions) && (
                                   <div className="text-[12px] text-gray-500 mt-2 flex items-start gap-1">
                                     <span className="font-semibold text-gray-400">Notes:</span>
-                                    <span className="italic">{med.instructions}</span>
+                                    <span className="italic">{med.instructionText || med.instructions}</span>
                                   </div>
                                 )}
                               </div>

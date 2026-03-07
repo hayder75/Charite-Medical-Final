@@ -2132,10 +2132,10 @@ const ComprehensivePatientHistory = () => {
                               <span style={{ color: '#6B7280' }}>Quantity:</span> <span style={{ color: '#0C0E0B' }}>{med.quantity || 'N/A'}</span>
                             </div>
                           </div>
-                          {med.instructions && (
+                          {(med.instructionText || med.instructions) && (
                             <div className="mt-2 pt-2 border-t" style={{ borderColor: '#E5E7EB' }}>
                               <p style={{ color: '#6B7280' }} className="text-sm">Instructions:</p>
-                              <p className="text-sm" style={{ color: '#0C0E0B' }}>{med.instructions}</p>
+                              <p className="text-sm" style={{ color: '#0C0E0B' }}>{med.instructionText || med.instructions}</p>
                             </div>
                           )}
                         </div>
@@ -2196,10 +2196,10 @@ const ComprehensivePatientHistory = () => {
                             </div>
                           )}
                         </div>
-                        {cp.instructions && (
+                        {(cp.prescriptionText || cp.rawText || cp.instructions) && (
                           <div className="text-sm text-amber-700 italic mt-3 bg-white/40 p-3 rounded-lg border border-amber-100">
                             <span className="font-bold not-italic text-amber-900 block mb-1">Pharmacist Instructions:</span>
-                            {cp.instructions}
+                            {cp.prescriptionText || cp.rawText || cp.instructions}
                           </div>
                         )}
                         <div className="mt-3 pt-2 text-[10px] text-amber-600 flex justify-between">

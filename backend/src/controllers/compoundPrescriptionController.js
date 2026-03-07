@@ -126,7 +126,7 @@ exports.createCompoundPrescription = async (req, res) => {
           visitId: data.visitId,
           referenceNumber: referenceNumber,
           formulationType: data.formulationType,
-          ingredientCount: data.ingredients.length
+          ingredientCount: data.ingredients ? data.ingredients.length : 0
         }),
         ip: req.ip,
         userAgent: req.get('User-Agent')

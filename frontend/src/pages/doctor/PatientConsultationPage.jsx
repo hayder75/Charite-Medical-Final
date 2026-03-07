@@ -1888,9 +1888,9 @@ const PatientConsultationPage = () => {
                                               </div>
                                             )}
                                           </div>
-                                          {cp.instructions && (
+                                          {(cp.prescriptionText || cp.rawText || cp.instructions) && (
                                             <div className="text-xs text-amber-700 italic mt-2 bg-amber-100 p-2 rounded">
-                                              Note: {cp.instructions}
+                                              Note: {cp.prescriptionText || cp.rawText || cp.instructions}
                                             </div>
                                           )}
                                         </div>
