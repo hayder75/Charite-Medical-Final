@@ -4182,7 +4182,8 @@ exports.createDoctorServiceOrder = async (req, res) => {
   try {
     console.log('🔍 Doctor Service Order Request Body:', JSON.stringify(req.body, null, 2));
 
-    const { visitId, patientId, serviceIds, assignedNurseId, instructions, customPrices, isDeferred } = req.body;
+    const { visitId, patientId, serviceIds, assignedNurseId, instructions, customPrices, servicePrices, isDeferred } = req.body;
+    const effectiveCustomPrices = customPrices || servicePrices;
     const doctorId = req.user.id;
 
     // Validate required fields
@@ -4213,11 +4214,11 @@ exports.createDoctorServiceOrder = async (req, res) => {
     }
 
     // Validate custom prices against ranges
-    if (customPrices) {
+    if (effectiveCustomPrices) {
       for (const serviceId of serviceIds) {
         const service = services.find(s => s.id === serviceId);
-        if (service && service.isVariablePrice && customPrices[serviceId]) {
-          const price = parseFloat(customPrices[serviceId]);
+        if (service && service.isVariablePrice && effectiveCustomPrices[serviceId]) {
+          const price = parseFloat(effectiveCustomPrices[serviceId]);
           if (service.minPrice !== null && price < service.minPrice) {
             return res.status(400).json({ error: `Price for ${service.name} is below minimum (${service.minPrice} ETB)` });
           }
@@ -4268,7 +4269,7 @@ exports.createDoctorServiceOrder = async (req, res) => {
         for (const serviceId of serviceIds) {
           const service = services.find(s => s.id === serviceId);
           serviceNames.push(service.name);
-          const price = customPrices && customPrices[serviceId] ? parseFloat(customPrices[serviceId]) : service.price;
+          const price = effectiveCustomPrices && effectiveCustomPrices[serviceId] ? parseFloat(effectiveCustomPrices[serviceId]) : service.price;
 
           // Create nurse assignment as PENDING so nurse can do the work
           const assignment = await tx.nurseServiceAssignment.create({
@@ -4281,7 +4282,7 @@ exports.createDoctorServiceOrder = async (req, res) => {
               notes: instructions || `Doctor ordered (deferred/connected): ${service.name}`,
               orderType: 'DOCTOR_ORDERED',
               isWaived: true, // Mark as waived so billing knows this is pre-paid
-              customPrice: customPrices && customPrices[serviceId] ? parseFloat(customPrices[serviceId]) : null
+              customPrice: effectiveCustomPrices && effectiveCustomPrices[serviceId] ? parseFloat(effectiveCustomPrices[serviceId]) : null
             },
             include: {
               service: true,
@@ -4355,7 +4356,7 @@ exports.createDoctorServiceOrder = async (req, res) => {
       for (const serviceId of serviceIds) {
         const service = services.find(s => s.id === serviceId);
         serviceNames.push(service.name);
-        const price = customPrices && customPrices[serviceId] ? parseFloat(customPrices[serviceId]) : service.price;
+        const price = effectiveCustomPrices && effectiveCustomPrices[serviceId] ? parseFloat(effectiveCustomPrices[serviceId]) : service.price;
 
         const assignment = await tx.nurseServiceAssignment.create({
           data: {
@@ -4366,7 +4367,7 @@ exports.createDoctorServiceOrder = async (req, res) => {
             status: 'PENDING',
             notes: instructions || `Doctor ordered: ${service.name}`,
             orderType: 'DOCTOR_ORDERED',
-            customPrice: customPrices && customPrices[serviceId] ? parseFloat(customPrices[serviceId]) : null
+            customPrice: effectiveCustomPrices && effectiveCustomPrices[serviceId] ? parseFloat(effectiveCustomPrices[serviceId]) : null
           },
           include: {
             service: true,
@@ -4434,7 +4435,7 @@ exports.createDoctorServiceOrder = async (req, res) => {
           serviceIds,
           assignedNurseId,
           instructions,
-          customPrices,
+          customPrices: effectiveCustomPrices,
           totalAmount: result.billing.totalAmount
         }),
         ip: req.ip,

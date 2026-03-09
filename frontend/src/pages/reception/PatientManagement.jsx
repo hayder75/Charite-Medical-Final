@@ -34,6 +34,7 @@ const PatientManagement = () => {
 
   // Card activation form
   const [activateForm, setActivateForm] = useState({
+    cardType: 'GENERAL',
     notes: ''
   });
 
@@ -92,13 +93,14 @@ const PatientManagement = () => {
 
       const response = await api.post('/reception/activate-card', {
         patientId: selectedPatient.id,
+        cardType: activateForm.cardType,
         notes: activateForm.notes
       });
 
       if (response.data.billing) {
         toast.success('Card activation bill sent to billing. Patient will be activated after payment.');
         setShowActivateModal(false);
-        setActivateForm({ notes: '' });
+        setActivateForm({ cardType: 'GENERAL', notes: '' });
         setSelectedPatient(null);
         fetchPatients();
       } else {
@@ -374,6 +376,10 @@ const PatientManagement = () => {
                           <button
                             onClick={() => {
                               setSelectedPatient(patient);
+                              setActivateForm({
+                                cardType: patient.cardType || 'GENERAL',
+                                notes: ''
+                              });
                               setShowActivateModal(true);
                             }}
                             className="text-green-600 hover:text-green-900"
@@ -429,6 +435,24 @@ const PatientManagement = () => {
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
+                Card Type For Reactivation
+              </label>
+              <select
+                value={activateForm.cardType}
+                onChange={(e) => setActivateForm({ ...activateForm, cardType: e.target.value })}
+                disabled={activatingCard}
+                className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 ${activatingCard ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+              >
+                <option value="GENERAL">General Card</option>
+                <option value="DERMATOLOGY">Dermatology Card</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                This selected card type will be used for activation billing and future card-based billing category.
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Notes (Optional)
               </label>
               <textarea
@@ -449,7 +473,7 @@ const PatientManagement = () => {
                 </div>
                 <div className="ml-3">
                   <p className="text-sm text-yellow-700">
-                    <strong>Note:</strong> This will create a 200 Birr activation bill. The card will be activated after payment is processed at billing.
+                    <strong>Note:</strong> This will create an activation bill based on selected card type. The card will be activated after payment is processed at billing.
                   </p>
                 </div>
               </div>

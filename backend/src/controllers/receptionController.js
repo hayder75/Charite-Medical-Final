@@ -24,6 +24,7 @@ const createPatientSchema = z.object({
 
 const activateCardSchema = z.object({
   patientId: z.string(),
+  cardType: z.enum(['GENERAL', 'DERMATOLOGY']).optional(),
   notes: z.string().optional()
 });
 
@@ -384,7 +385,18 @@ exports.activateCard = async (req, res) => {
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    const cardActService = await getOrCreateCardService('ACTIVATION', patient.cardType);
+    const selectedCardType = validatedData.cardType || patient.cardType || 'GENERAL';
+
+    // Persist card type choice at reactivation so future billing categorization stays consistent.
+    if (selectedCardType !== patient.cardType) {
+      await prisma.patient.update({
+        where: { id: patient.id },
+        data: { cardType: selectedCardType }
+      });
+      patient.cardType = selectedCardType;
+    }
+
+    const cardActService = await getOrCreateCardService('ACTIVATION', selectedCardType);
 
     // Create billing for card activation (100 general / 200 dermatology)
     const billing = await prisma.billing.create({
@@ -392,7 +404,7 @@ exports.activateCard = async (req, res) => {
         patientId: patient.id,
         totalAmount: cardActService.price,
         status: 'PENDING',
-        notes: validatedData.notes || 'Patient card activation/renewal fee',
+        notes: validatedData.notes || `Patient card activation/renewal fee (${selectedCardType})`,
         services: {
           create: {
             serviceId: cardActService.id,
@@ -418,7 +430,7 @@ exports.activateCard = async (req, res) => {
         entity: 'Patient',
         entityId: parseInt(patient.id.split('-').pop()) || 0,
         userId: receptionistId,
-        details: `Card activation requested for ${patient.name} (${patient.id}). Bill created: ${billing.id}`
+        details: `Card activation requested for ${patient.name} (${patient.id}) with ${selectedCardType} card type. Bill created: ${billing.id}`
       }
     });
 

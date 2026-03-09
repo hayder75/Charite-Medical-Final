@@ -1833,13 +1833,22 @@ const PatientConsultationPage = () => {
                                   <h4 className="font-bold text-lg">Medications</h4>
                                   {selectedVisit.medicationOrders && selectedVisit.medicationOrders.length > 0 ? (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                      {selectedVisit.medicationOrders.map((med, idx) => (
+                                       {selectedVisit.medicationOrders.map((med, idx) => {
+                                        const cleanedStrength = (med.strength || '').replace(/\s*-\s*for\s*$/i, '').trim();
+                                        const cleanedInstruction = (med.instructionText || med.instructions || '').replace(/^\s*for\s+/i, '').trim();
+
+                                        return (
                                         <div key={idx} className="p-4 border rounded-lg bg-white shadow-sm">
                                           <p className="font-bold text-gray-900">{med.name}</p>
-                                          <p className="text-sm text-gray-600">{med.strength} - {med.quantity} {med.frequency} for {med.duration}</p>
-                                          <p className="text-xs text-gray-500 mt-1">{med.dosageForm}</p>
+                                          <p className="text-sm text-gray-600">{cleanedStrength || 'N/A'}</p>
+                                          {cleanedInstruction && (
+                                            <p className="text-sm text-indigo-600 mt-2 bg-indigo-50 p-2 rounded">
+                                              <span className="font-semibold">Instructions:</span> {cleanedInstruction}
+                                            </p>
+                                          )}
                                         </div>
-                                      ))}
+                                      );
+                                      })}
                                     </div>
                                   ) : (
                                     <p className="text-gray-500">No regular medications for this visit</p>
@@ -2961,10 +2970,10 @@ const PatientConsultationPage = () => {
             <div>
               <h3 className="text-lg font-semibold mb-4" style={{ color: '#0C0E0B' }}>Nurse Services</h3>
 
-              {/* Completed Nurse Services */}
+              {/* Nurse Services (Pending + Completed) */}
               {visit?.nurseServiceAssignments && visit.nurseServiceAssignments.length > 0 ? (
                 <div className="mb-6">
-                  <h4 className="font-medium mb-3" style={{ color: '#0C0E0B' }}>Completed Services</h4>
+                  <h4 className="font-medium mb-3" style={{ color: '#0C0E0B' }}>Ordered Services</h4>
                   <div className="space-y-3">
                     {visit.nurseServiceAssignments.map((assignment) => (
                       <div key={assignment.id} className="p-4 border rounded-lg" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
@@ -2983,16 +2992,22 @@ const PatientConsultationPage = () => {
                             )}
                             <div className="flex items-center mt-2 text-xs" style={{ color: '#6B7280' }}>
                               <span>Assigned to: {assignment.assignedNurse.fullname}</span>
-                              <span className="mx-2">•</span>
-                              <span>Completed: {new Date(assignment.completedAt).toLocaleString()}</span>
+                              {assignment.status === 'COMPLETED' && assignment.completedAt && (
+                                <>
+                                  <span className="mx-2">•</span>
+                                  <span>Completed: {new Date(assignment.completedAt).toLocaleString()}</span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="text-right">
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                              Completed
+                            <span
+                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${assignment.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}
+                            >
+                              {assignment.status === 'COMPLETED' ? 'Completed' : 'Pending'}
                             </span>
                             <p className="text-sm font-medium mt-1" style={{ color: '#0C0E0B' }}>
-                              ETB {assignment.service.price.toLocaleString()}
+                              ETB {(assignment.customPrice ?? assignment.service.price).toLocaleString()}
                             </p>
                           </div>
                         </div>

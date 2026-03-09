@@ -2612,6 +2612,24 @@ exports.deleteBilling = async (req, res) => {
 
       // Delete billing services
       if (billing.services.length > 0) {
+        // Keep doctor/nurse service lists in sync when entire billing is removed.
+        // Match by visit + service and only remove still-pending assignments.
+        if (billing.visitId) {
+          const billedServiceIds = billing.services
+            .map(s => s.serviceId)
+            .filter(Boolean);
+
+          if (billedServiceIds.length > 0) {
+            await tx.nurseServiceAssignment.deleteMany({
+              where: {
+                visitId: billing.visitId,
+                serviceId: { in: billedServiceIds },
+                status: 'PENDING'
+              }
+            });
+          }
+        }
+
         await tx.billingService.deleteMany({
           where: { billingId: billingId }
         });

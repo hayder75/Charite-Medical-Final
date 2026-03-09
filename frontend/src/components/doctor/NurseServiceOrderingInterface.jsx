@@ -212,7 +212,7 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
                         (Completed by: {assignment.assignedNurse.fullname})
                       </span>
                     </div>
-                    <span className="font-medium" style={{ color: '#0C0E0B' }}>ETB {assignment.service.price.toLocaleString()}</span>
+                    <span className="font-medium" style={{ color: '#0C0E0B' }}>ETB {(assignment.customPrice ?? assignment.service.price).toLocaleString()}</span>
                   </div>
                 ))}
               </div>
@@ -237,7 +237,7 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
                       </span>
                     </div>
                     <div className="flex items-center">
-                      <span className="font-medium mr-3" style={{ color: '#0C0E0B' }}>ETB {assignment.service.price.toLocaleString()}</span>
+                      <span className="font-medium mr-3" style={{ color: '#0C0E0B' }}>ETB {(assignment.customPrice ?? assignment.service.price).toLocaleString()}</span>
                       <button
                         onClick={() => handleDeletePendingService(assignment.id)}
                         className="p-1 rounded hover:bg-red-100 text-red-600"
@@ -252,7 +252,7 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
               <div className="mt-3 pt-3 border-t flex justify-between items-center">
                 <span className="font-semibold" style={{ color: '#92400E' }}>Total Pending:</span>
                 <span className="text-lg font-bold" style={{ color: '#92400E' }}>
-                  ETB {pendingServices.reduce((sum, s) => sum + s.service.price, 0).toLocaleString()}
+                  ETB {pendingServices.reduce((sum, s) => sum + (s.customPrice ?? s.service.price), 0).toLocaleString()}
                 </span>
               </div>
             </div>
