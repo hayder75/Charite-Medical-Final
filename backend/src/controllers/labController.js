@@ -283,13 +283,61 @@ async function checkAndUpdateVisitStatus(visitId) {
   try {
     const visit = await prisma.visit.findUnique({
       where: { id: visitId },
-      include: { labOrders: true, radiologyOrders: true, batchOrders: { where: { type: 'LAB' } } }
+      include: {
+        labOrders: true,
+        radiologyOrders: true,
+        batchOrders: {
+          where: { type: 'LAB' },
+          include: {
+            services: { select: { status: true } },
+            labTestOrders: { select: { status: true } }
+          }
+        }
+      }
     });
     if (!visit) return null;
 
-    const hasActiveLabOrders = visit.labOrders?.some(o => o.status !== 'COMPLETED');
-    const hasActiveRadiology = visit.radiologyOrders?.some(o => o.status !== 'COMPLETED');
-    const hasPendingLabBatch = visit.batchOrders?.some(o => o.status !== 'COMPLETED');
+    const completedStatuses = ['COMPLETED', 'CANCELLED'];
+
+    // Keep compatibility placeholder batch orders in sync with linked LabTestOrder records.
+    for (const batch of (visit.batchOrders || [])) {
+      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
+      if (!hasLinkedLabTests) continue;
+
+      const hasPendingLabTests = batch.labTestOrders.some(
+        (order) => !completedStatuses.includes(order.status)
+      );
+
+      if (!hasPendingLabTests && batch.status !== 'COMPLETED') {
+        await prisma.batchOrder.update({
+          where: { id: batch.id },
+          data: { status: 'COMPLETED' }
+        });
+        batch.status = 'COMPLETED';
+      }
+    }
+
+    const hasActiveLabOrders = visit.labOrders?.some(
+      (o) => !completedStatuses.includes(o.status)
+    );
+    const hasActiveRadiology = visit.radiologyOrders?.some(
+      (o) => !completedStatuses.includes(o.status)
+    );
+    const hasPendingLabBatch = (visit.batchOrders || []).some((batch) => {
+      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
+      const hasServices = Array.isArray(batch.services) && batch.services.length > 0;
+
+      if (hasLinkedLabTests) {
+        return batch.labTestOrders.some((order) => !completedStatuses.includes(order.status));
+      }
+
+      if (hasServices) {
+        return batch.services.some((service) => !completedStatuses.includes(service.status));
+      }
+
+      // Ignore empty placeholder LAB batch orders with no child records.
+      return false;
+    });
 
     if (!hasActiveLabOrders && !hasPendingLabBatch && !hasActiveRadiology) {
       return await prisma.visit.update({ where: { id: visitId }, data: { status: 'AWAITING_RESULTS_REVIEW', queueType: 'RESULTS_REVIEW' } });
@@ -788,13 +836,61 @@ async function checkAndUpdateVisitStatus(visitId) {
   try {
     const visit = await prisma.visit.findUnique({
       where: { id: visitId },
-      include: { labOrders: true, radiologyOrders: true, batchOrders: { where: { type: 'LAB' } } }
+      include: {
+        labOrders: true,
+        radiologyOrders: true,
+        batchOrders: {
+          where: { type: 'LAB' },
+          include: {
+            services: { select: { status: true } },
+            labTestOrders: { select: { status: true } }
+          }
+        }
+      }
     });
     if (!visit) return null;
 
-    const hasActiveLabOrders = visit.labOrders?.some(o => o.status !== 'COMPLETED');
-    const hasActiveRadiology = visit.radiologyOrders?.some(o => o.status !== 'COMPLETED');
-    const hasPendingLabBatch = visit.batchOrders?.some(o => o.status !== 'COMPLETED');
+    const completedStatuses = ['COMPLETED', 'CANCELLED'];
+
+    // Keep compatibility placeholder batch orders in sync with linked LabTestOrder records.
+    for (const batch of (visit.batchOrders || [])) {
+      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
+      if (!hasLinkedLabTests) continue;
+
+      const hasPendingLabTests = batch.labTestOrders.some(
+        (order) => !completedStatuses.includes(order.status)
+      );
+
+      if (!hasPendingLabTests && batch.status !== 'COMPLETED') {
+        await prisma.batchOrder.update({
+          where: { id: batch.id },
+          data: { status: 'COMPLETED' }
+        });
+        batch.status = 'COMPLETED';
+      }
+    }
+
+    const hasActiveLabOrders = visit.labOrders?.some(
+      (o) => !completedStatuses.includes(o.status)
+    );
+    const hasActiveRadiology = visit.radiologyOrders?.some(
+      (o) => !completedStatuses.includes(o.status)
+    );
+    const hasPendingLabBatch = (visit.batchOrders || []).some((batch) => {
+      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
+      const hasServices = Array.isArray(batch.services) && batch.services.length > 0;
+
+      if (hasLinkedLabTests) {
+        return batch.labTestOrders.some((order) => !completedStatuses.includes(order.status));
+      }
+
+      if (hasServices) {
+        return batch.services.some((service) => !completedStatuses.includes(service.status));
+      }
+
+      // Ignore empty placeholder LAB batch orders with no child records.
+      return false;
+    });
 
     if (!hasActiveLabOrders && !hasPendingLabBatch && !hasActiveRadiology) {
       return await prisma.visit.update({ where: { id: visitId }, data: { status: 'AWAITING_RESULTS_REVIEW', queueType: 'RESULTS_REVIEW' } });

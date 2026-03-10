@@ -13,12 +13,45 @@ async function checkVisitInvestigationCompletion(visitId) {
     const visit = await prisma.visit.findUnique({
       where: { id: visitId },
       include: {
-        labOrders: true,
-        radiologyOrders: true,
-        labTestOrders: true,
+        labOrders: {
+          include: {
+            labResults: {
+              select: { id: true }
+            }
+          }
+        },
+        radiologyOrders: {
+          include: {
+            radiologyResults: {
+              select: { id: true }
+            }
+          }
+        },
+        labTestOrders: {
+          include: {
+            results: {
+              select: { id: true }
+            }
+          }
+        },
         batchOrders: {
           include: {
-            services: true
+            services: {
+              select: { status: true }
+            },
+            labTestOrders: {
+              include: {
+                results: {
+                  select: { id: true }
+                }
+              }
+            },
+            detailedResults: {
+              select: { id: true }
+            },
+            radiologyResults: {
+              select: { id: true }
+            }
           }
         }
       }
@@ -30,29 +63,57 @@ async function checkVisitInvestigationCompletion(visitId) {
     }
 
     const pendingStatuses = ['UNPAID', 'PAID', 'QUEUED', 'IN_PROGRESS'];
+    const terminalStatuses = ['COMPLETED', 'CANCELLED'];
 
-    // 1. Check legacy/direct orders
-    const hasPendingLabOrders = visit.labOrders.some(o => pendingStatuses.includes(o.status));
-    const hasPendingRadiologyOrders = visit.radiologyOrders.some(o => pendingStatuses.includes(o.status));
-    const hasPendingLabTestOrders = visit.labTestOrders.some(o => pendingStatuses.includes(o.status));
+    // 1. Check legacy/direct orders, but trust actual result presence over stale status.
+    const hasPendingLabOrders = visit.labOrders.some(
+      (o) => pendingStatuses.includes(o.status) && !(Array.isArray(o.labResults) && o.labResults.length > 0)
+    );
+    const hasPendingRadiologyOrders = visit.radiologyOrders.some(
+      (o) => pendingStatuses.includes(o.status) && !(Array.isArray(o.radiologyResults) && o.radiologyResults.length > 0)
+    );
+    const hasPendingLabTestOrders = visit.labTestOrders.some(
+      (o) => pendingStatuses.includes(o.status) && !(Array.isArray(o.results) && o.results.length > 0)
+    );
 
-    // 2. Check batch orders (handling MIXED type)
-    const hasPendingBatchOrders = visit.batchOrders.some(order => {
-      // Check if order itself is pending
-      if (pendingStatuses.includes(order.status)) {
-        // If it's a MIXED or LAB/RADIOLOGY order, check if any of its services are still pending
-        // LAB/RADIOLOGY orders that are PAID/QUEUED are always pending
-        if (order.type === 'LAB' || order.type === 'RADIOLOGY') return true;
-
-        // MIXED orders are pending if ANY service is pending
-        if (order.type === 'MIXED') {
-          return order.services.some(s => pendingStatuses.includes(s.status));
-        }
-
-        // DENTAL/NURSE/DRUGS don't block consultation completion in this utility
+    // 2. Check batch orders (LAB/RADIOLOGY/MIXED only), favoring result evidence for legacy inconsistencies.
+    const hasPendingBatchOrders = visit.batchOrders.some((order) => {
+      if (!['LAB', 'RADIOLOGY', 'MIXED'].includes(order.type)) {
         return false;
       }
-      return false;
+
+      if (terminalStatuses.includes(order.status)) {
+        return false;
+      }
+
+      const hasServices = Array.isArray(order.services) && order.services.length > 0;
+      const hasLinkedLabTests = Array.isArray(order.labTestOrders) && order.labTestOrders.length > 0;
+      const hasDetailedLabResults = Array.isArray(order.detailedResults) && order.detailedResults.length > 0;
+      const hasRadiologyResults = Array.isArray(order.radiologyResults) && order.radiologyResults.length > 0;
+      const isLabPlaceholder =
+        order.type === 'LAB' &&
+        !hasServices &&
+        /lab tests ordered by doctor/i.test(order.instructions || '');
+
+      if (hasLinkedLabTests) {
+        return order.labTestOrders.some(
+          (testOrder) => pendingStatuses.includes(testOrder.status) && !(Array.isArray(testOrder.results) && testOrder.results.length > 0)
+        );
+      }
+
+      if (hasDetailedLabResults || hasRadiologyResults) {
+        return false;
+      }
+
+      if (hasServices) {
+        return order.services.some((service) => pendingStatuses.includes(service.status));
+      }
+
+      if (isLabPlaceholder) {
+        return false;
+      }
+
+      return pendingStatuses.includes(order.status);
     });
 
     const isComplete = !hasPendingLabOrders && !hasPendingRadiologyOrders && !hasPendingLabTestOrders && !hasPendingBatchOrders;

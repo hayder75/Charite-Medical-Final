@@ -490,50 +490,82 @@ const PatientConsultationPage = () => {
     // Only PAID/QUEUED/IN_PROGRESS orders block completion. UNPAID orders do not.
     const activeStatuses = ['PAID', 'QUEUED', 'IN_PROGRESS'];
 
-    const pendingBatchLabOrders = (visit.batchOrders || []).filter(order => {
-      if (order.type !== 'LAB') return false;
-      // Check if batch order itself is active
-      if (activeStatuses.includes(order.status)) {
-        return true;
+    const terminalStatuses = ['COMPLETED', 'CANCELLED'];
+
+    const isPendingBatchOrder = (order) => {
+      if (!order || !['LAB', 'RADIOLOGY', 'PROCEDURE'].includes(order.type)) {
+        return false;
       }
-      // Check if any service within the batch order is active
-      const hasActiveServices = (order.services || []).some(service =>
-        activeStatuses.includes(service.status)
-      );
-      return hasActiveServices;
+
+      if (terminalStatuses.includes(order.status)) {
+        return false;
+      }
+
+      const hasServices = Array.isArray(order.services) && order.services.length > 0;
+      const hasLinkedLabTests = Array.isArray(order.labTestOrders) && order.labTestOrders.length > 0;
+      const hasDetailedLabResults = Array.isArray(order.detailedLabResults) && order.detailedLabResults.length > 0;
+      const hasRadiologyResults = Array.isArray(order.radiologyResults) && order.radiologyResults.length > 0;
+      const isLabPlaceholder =
+        order.type === 'LAB' &&
+        !hasServices &&
+        /lab tests ordered by doctor/i.test(order.instructions || '');
+
+      if (hasLinkedLabTests) {
+        return order.labTestOrders.some((testOrder) => {
+          const hasResult = Array.isArray(testOrder.results) && testOrder.results.length > 0;
+          return activeStatuses.includes(testOrder.status) && !hasResult;
+        });
+      }
+
+      if (hasDetailedLabResults || hasRadiologyResults) {
+        return false;
+      }
+
+      if (hasServices) {
+        return (order.services || []).some((service) => activeStatuses.includes(service.status));
+      }
+
+      if (isLabPlaceholder) {
+        return false;
+      }
+
+      return activeStatuses.includes(order.status);
+    };
+
+    const pendingBatchLabOrders = (visit.batchOrders || []).filter(
+      (order) => order.type === 'LAB' && isPendingBatchOrder(order)
+    );
+
+    const pendingBatchRadiologyOrders = (visit.batchOrders || []).filter(
+      (order) => order.type === 'RADIOLOGY' && isPendingBatchOrder(order)
+    );
+
+    const pendingBatchProcedureOrders = (visit.batchOrders || []).filter(
+      (order) => order.type === 'PROCEDURE' && isPendingBatchOrder(order)
+    );
+
+    // Check legacy lab orders - treat submitted results as completed even if status is stale.
+    const pendingLabOrders = (visit.labOrders || []).filter((order) => {
+      const hasResult = Array.isArray(order.labResults) && order.labResults.length > 0;
+      return activeStatuses.includes(order.status) && !hasResult;
     });
 
-    const pendingBatchRadiologyOrders = (visit.batchOrders || []).filter(order => {
-      if (order.type !== 'RADIOLOGY') return false;
-      // Check if batch order itself is active
-      if (activeStatuses.includes(order.status)) {
-        return true;
-      }
-      // Check if any service within the batch order is active
-      const hasActiveServices = (order.services || []).some(service =>
-        activeStatuses.includes(service.status)
-      );
-      return hasActiveServices;
+    // Check legacy radiology orders - treat submitted results as completed even if status is stale.
+    const pendingRadiologyOrders = (visit.radiologyOrders || []).filter((order) => {
+      const hasResult = Array.isArray(order.radiologyResults) && order.radiologyResults.length > 0;
+      return activeStatuses.includes(order.status) && !hasResult;
     });
 
-    // Check legacy lab orders
-    const pendingLabOrders = (visit.labOrders || []).filter(order =>
-      activeStatuses.includes(order.status)
-    );
-
-    // Check legacy radiology orders
-    const pendingRadiologyOrders = (visit.radiologyOrders || []).filter(order =>
-      activeStatuses.includes(order.status)
-    );
-
-    // Check new lab test orders system
-    const pendingLabTestOrders = (visit.labTestOrders || []).filter(order =>
-      activeStatuses.includes(order.status)
-    );
+    // Check new lab test orders system - results override stale status.
+    const pendingLabTestOrders = (visit.labTestOrders || []).filter((order) => {
+      const hasResult = Array.isArray(order.results) && order.results.length > 0;
+      return activeStatuses.includes(order.status) && !hasResult;
+    });
 
     // If any orders are actively being processed, block completion
     return pendingBatchLabOrders.length > 0 ||
       pendingBatchRadiologyOrders.length > 0 ||
+      pendingBatchProcedureOrders.length > 0 ||
       pendingLabOrders.length > 0 ||
       pendingRadiologyOrders.length > 0 ||
       pendingLabTestOrders.length > 0;
@@ -952,7 +984,7 @@ const PatientConsultationPage = () => {
                 }}
                 onClick={handleCompleteVisit}
                 disabled={hasPendingOrders}
-                title={hasPendingOrders ? 'Cannot complete visit with pending lab or radiology orders' : 'Complete this visit'}
+                title={hasPendingOrders ? 'Cannot complete visit with pending lab, radiology, or procedure orders' : 'Complete this visit'}
               >
                 Complete Visit
               </button>
