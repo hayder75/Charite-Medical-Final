@@ -12,9 +12,13 @@ import { toast } from 'react-hot-toast';
 import api from '../../services/api';
 import ImageViewer from '../common/ImageViewer';
 import DoctorServiceOrdering from './DoctorServiceOrdering';
+import { useAuth } from '../../contexts/AuthContext';
+
+const getDoctorQueueCacheKey = (doctorId) => `doctor-unified-queue-cache:${doctorId || 'unknown'}`;
 
 const UnifiedQueue = () => {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const [queue, setQueue] = useState([]);
   const [stats, setStats] = useState({ urgent: 0, results: 0, new: 0, total: 0, sent: 0 });
   const [loading, setLoading] = useState(true);
@@ -29,6 +33,23 @@ const UnifiedQueue = () => {
   const [globalQueue, setGlobalQueue] = useState([]);
   const [isSearchingGlobal, setIsSearchingGlobal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const queueCacheKey = getDoctorQueueCacheKey(currentUser?.id);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(queueCacheKey);
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (Array.isArray(cached.queue)) setQueue(cached.queue);
+      if (cached.stats) setStats(cached.stats);
+      if (Array.isArray(cached.triageQueue)) setTriageQueue(cached.triageQueue);
+      if (cached.triageStats) setTriageStats(cached.triageStats);
+      if (cached.queueFilter) setQueueFilter(cached.queueFilter);
+      setLoading(false);
+    } catch (cacheError) {
+      console.warn('Failed to restore queue cache:', cacheError);
+    }
+  }, [queueCacheKey]);
 
   useEffect(() => {
     // Always fetch unified queue first to get persistent stats for all queues
@@ -108,10 +129,30 @@ const UnifiedQueue = () => {
         }
 
         setQueue(filteredQueue);
+
+        try {
+          sessionStorage.setItem(
+            queueCacheKey,
+            JSON.stringify({
+              queue: filteredQueue,
+              stats: response.data.stats,
+              triageQueue,
+              triageStats,
+              queueFilter,
+              savedAt: Date.now()
+            })
+          );
+        } catch (cacheError) {
+          console.warn('Failed to persist queue cache:', cacheError);
+        }
       }
     } catch (error) {
       console.error('Error fetching unified queue:', error);
-      toast.error('Failed to fetch patient queue');
+      if (queue.length > 0) {
+        toast.error('Network issue: showing last loaded queue');
+      } else {
+        toast.error('Failed to fetch patient queue');
+      }
     } finally {
       setLoading(false);
     }
@@ -141,10 +182,30 @@ const UnifiedQueue = () => {
           new: response.data.stats.waiting,
           awaiting: response.data.stats.triaged
         }));
+
+        try {
+          sessionStorage.setItem(
+            queueCacheKey,
+            JSON.stringify({
+              queue: response.data.queue,
+              stats: unifiedResponse.data?.stats || stats,
+              triageQueue: response.data.queue,
+              triageStats: response.data.stats,
+              queueFilter,
+              savedAt: Date.now()
+            })
+          );
+        } catch (cacheError) {
+          console.warn('Failed to persist triage cache:', cacheError);
+        }
       }
     } catch (error) {
       console.error('Error fetching triage queue:', error);
-      toast.error('Failed to fetch triage queue');
+      if (triageQueue.length > 0) {
+        toast.error('Network issue: showing last loaded triage queue');
+      } else {
+        toast.error('Failed to fetch triage queue');
+      }
     } finally {
       setLoading(false);
     }

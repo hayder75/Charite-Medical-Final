@@ -23,6 +23,8 @@ import AccommodationTab from '../../components/doctor/AccommodationTab';
 import CompoundPrescriptionBuilder from '../../components/doctor/CompoundPrescriptionBuilder';
 import Layout from '../../components/common/Layout';
 
+const getConsultationCacheKey = (doctorId, visitId) => `doctor-consultation-cache:${doctorId || 'unknown'}:${visitId || 'unknown'}`;
+
 const NOTE_FIELDS = [
   { key: 'chiefComplaint', label: 'Chief Complaint' },
   { key: 'historyOfPresentIllness', label: 'History of Present Illness' },
@@ -244,6 +246,11 @@ const PatientConsultationPage = () => {
     return currentUser?.role === 'DERMATOLOGY' || qualifications.some((q) => q.includes('DERM'));
   }, [currentUser]);
 
+  const consultationCacheKey = useMemo(
+    () => getConsultationCacheKey(currentUser?.id, visitId),
+    [currentUser?.id, visitId]
+  );
+
   // Memoize tabs array to prevent recreation on every render
   // Order: triage → vitals → patient-history → images → dental chart → dental services (only for dentists) → diagnosis notes → medication → emergency drugs → material needs → lab → radiology → nurse services
   const tabs = useMemo(() => {
@@ -278,6 +285,27 @@ const PatientConsultationPage = () => {
     console.debug('[Consultation] useEffect 2 - fetchVisitData called for visitId:', visitId);
     fetchVisitData();
   }, [visitId]);
+
+  // Hydrate from session cache first to keep consultation data visible on browser refresh.
+  useEffect(() => {
+    try {
+      if (!consultationCacheKey) return;
+      const raw = sessionStorage.getItem(consultationCacheKey);
+      if (!raw) return;
+
+      const cached = JSON.parse(raw);
+      if (!cached?.visit) return;
+
+      setVisit(cached.visit);
+      setAllVitals(Array.isArray(cached.vitals) ? cached.vitals : []);
+      if (cached.dentalRecord) {
+        setDentalRecord(cached.dentalRecord);
+      }
+      setLoading(false);
+    } catch (cacheError) {
+      console.warn('[Consultation] Failed to restore session cache:', cacheError);
+    }
+  }, [consultationCacheKey]);
 
   // If current activeTab is not available for this user, switch to the first available tab
   useEffect(() => {
@@ -392,6 +420,19 @@ const PatientConsultationPage = () => {
         }
       }
 
+      // Persist latest consultation snapshot per doctor+visit to survive refresh.
+      try {
+        const snapshot = {
+          visit: response.data,
+          vitals: response.data?.vitals || [],
+          dentalRecord,
+          savedAt: Date.now()
+        };
+        sessionStorage.setItem(consultationCacheKey, JSON.stringify(snapshot));
+      } catch (cacheError) {
+        console.warn('[Consultation] Failed to persist cache:', cacheError);
+      }
+
     } catch (error) {
       console.error('Error fetching visit data:', error);
       if (error.response?.status === 401) {
@@ -404,7 +445,12 @@ const PatientConsultationPage = () => {
         toast.error('Access denied to this visit');
         navigate('/doctor/dashboard');
       } else {
-        toast.error('Failed to load patient data');
+        // Keep current cached data on transient failures instead of showing blank N/A state.
+        if (!visit) {
+          toast.error('Failed to load patient data');
+        } else {
+          toast.error('Network issue: showing last loaded patient data');
+        }
       }
     } finally {
       setLoading(false);
@@ -886,6 +932,23 @@ const PatientConsultationPage = () => {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto" style={{ borderColor: '#2e13d1' }}></div>
             <p className="mt-4" style={{ color: '#0C0E0B' }}>Loading patient data...</p>
           </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!visit) {
+    return (
+      <Layout title="Patient Consultation" subtitle="Unable to load visit">
+        <div className="max-w-xl mx-auto bg-white border border-red-200 rounded-lg p-6 text-center">
+          <p className="text-lg font-semibold text-red-700 mb-2">Could not load consultation data</p>
+          <p className="text-sm text-gray-600 mb-4">Please return to queue and open the patient again.</p>
+          <button
+            onClick={() => navigate('/doctor/queue')}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Back to Queue
+          </button>
         </div>
       </Layout>
     );
