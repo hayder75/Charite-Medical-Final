@@ -18,6 +18,33 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
   const [isAddingDiagnosis, setIsAddingDiagnosis] = useState(false);
   const [isDeletingDiagnosisId, setIsDeletingDiagnosisId] = useState(null);
 
+  const diseaseSelectStyles = {
+    control: (base, state) => ({
+      ...base,
+      minHeight: 42,
+      borderColor: state.isFocused ? '#3B82F6' : '#D1D5DB',
+      boxShadow: state.isFocused ? '0 0 0 1px #3B82F6' : 'none',
+      backgroundColor: '#FFFFFF'
+    }),
+    singleValue: (base) => ({
+      ...base,
+      color: '#111827',
+      fontWeight: 500
+    }),
+    input: (base) => ({
+      ...base,
+      color: '#111827'
+    }),
+    placeholder: (base) => ({
+      ...base,
+      color: '#6B7280'
+    }),
+    menu: (base) => ({
+      ...base,
+      zIndex: 30
+    })
+  };
+
   // --- Clinical Notes State ---
   const [notes, setNotes] = useState({
     chiefComplaint: '',
@@ -146,6 +173,11 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
     };
   };
 
+  const handleDiseaseSelection = (option) => {
+    setSelectedDisease(option);
+    setDiseaseSearchInput(option?.label || '');
+  };
+
   const resolveDiseaseId = async () => {
     if (!selectedDisease) return null;
 
@@ -249,8 +281,9 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
                   cacheOptions
                   loadOptions={loadDiseaseOptions}
                   defaultOptions
+                  styles={diseaseSelectStyles}
                   value={selectedDisease}
-                  onChange={setSelectedDisease}
+                  onChange={handleDiseaseSelection}
                   inputValue={diseaseSearchInput}
                   onInputChange={(value, actionMeta) => {
                     if (actionMeta.action === 'input-change') {
@@ -261,7 +294,7 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
                   onCreateOption={(inputValue) => {
                     const option = createCustomDiseaseOption(inputValue);
                     if (option) {
-                      setSelectedDisease(option);
+                      handleDiseaseSelection(option);
                     }
                   }}
                   formatCreateLabel={(inputValue) => `Use "${inputValue}" as custom disease`}
@@ -279,7 +312,7 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
                     return;
                   }
 
-                  setSelectedDisease(option);
+                  handleDiseaseSelection(option);
                 }}
                 className="px-3 py-2 text-sm bg-purple-100 text-purple-700 rounded hover:bg-purple-200 whitespace-nowrap"
               >

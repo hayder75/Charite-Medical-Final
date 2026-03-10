@@ -484,17 +484,17 @@ const ProcedureOrdering = ({ visit, onOrdersPlaced }) => {
                                         onChange={(e) => updateInstruction(service.id, e.target.value)}
                                     />
                                     {service.isVariablePrice && (
-                                        <div className="mt-2 bg-indigo-50 p-2 rounded border border-indigo-100 flex items-center gap-3">
-                                            <label className="text-xs font-semibold text-indigo-700 whitespace-nowrap">Set Assessment Price ({service.minPrice} - {service.maxPrice}):</label>
-                                            <div className="relative flex-1">
-                                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-indigo-500 text-xs font-bold">ETB</span>
+                                        <div className="mt-3 bg-indigo-50 p-3.5 rounded-lg border border-indigo-200 flex flex-col items-stretch gap-2">
+                                            <label className="text-sm font-bold text-indigo-800">Set Assessment Price ({service.minPrice} - {service.maxPrice}):</label>
+                                            <div className="relative w-full md:max-w-sm">
+                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-600 text-sm font-bold">ETB</span>
                                                 <input
                                                     type="number"
                                                     step="0.01"
                                                     min={service.minPrice}
                                                     max={service.maxPrice}
-                                                    className="w-full pl-10 pr-3 py-1.5 text-xs border border-indigo-300 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-indigo-800"
-                                                    placeholder="Enter price..."
+                                                    className="w-full pl-12 pr-3 py-3 text-base border-2 border-indigo-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-900 bg-white"
+                                                    placeholder="Enter assessment price..."
                                                     value={customPrices[service.id] || ''}
                                                     onChange={(e) => setCustomPrices({ ...customPrices, [service.id]: e.target.value })}
                                                 />

@@ -414,10 +414,10 @@ const DoctorServiceOrdering = ({ visit, onClose, onOrdersPlaced }) => {
                         </span>
                       </div>
                       {service.isVariablePrice && (
-                        <div className="flex items-center gap-2 mt-1 bg-white p-2 rounded border border-blue-100">
-                          <label className="text-[10px] font-bold text-blue-700 uppercase whitespace-nowrap">Set Assessment Price ({service.minPrice} - {service.maxPrice}):</label>
-                          <div className="relative flex-1">
-                            <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-blue-500 font-bold">ETB</span>
+                        <div className="flex flex-col items-stretch gap-2 mt-2 bg-white p-3 rounded-lg border border-blue-200">
+                          <label className="text-xs font-bold text-blue-800 uppercase">Set Assessment Price ({service.minPrice} - {service.maxPrice}):</label>
+                          <div className="relative w-full md:max-w-sm">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-blue-600 font-bold">ETB</span>
                             <input
                               type="number"
                               step="0.01"
@@ -425,8 +425,8 @@ const DoctorServiceOrdering = ({ visit, onClose, onOrdersPlaced }) => {
                               max={service.maxPrice}
                               value={customPrices[service.id] || ''}
                               onChange={(e) => setCustomPrices({ ...customPrices, [service.id]: e.target.value })}
-                              className="w-full pl-7 pr-2 py-1 text-xs border border-blue-200 rounded focus:ring-1 focus:ring-blue-500 outline-none font-bold text-blue-800"
-                              placeholder="Price"
+                              className="w-full pl-11 pr-3 py-2.5 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-bold text-blue-900 bg-white"
+                              placeholder="Enter assessment price"
                             />
                           </div>
                         </div>
