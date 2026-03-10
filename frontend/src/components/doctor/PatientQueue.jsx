@@ -10,6 +10,9 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const PatientQueue = () => {
   const { user: currentUser } = useAuth();
+  const isDermatologyDoctor =
+    currentUser?.role === 'DERMATOLOGY' ||
+    (currentUser?.qualifications || []).some((q) => String(q || '').toUpperCase().includes('DERM'));
   const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedVisit, setSelectedVisit] = useState(null);
@@ -305,13 +308,19 @@ const PatientQueue = () => {
         }
       }
 
+      let countAsMedicalTreated = false;
+      if (isDermatologyDoctor) {
+        countAsMedicalTreated = window.confirm('Count this patient as Medical treated?');
+      }
+
       // Then set status to DIRECT_COMPLETE (for medication prescription)
       await api.post('/doctors/direct-complete', {
         visitId: selectedVisit.id,
         diagnosis: formData.primaryDiagnosis,
         diagnosisDetails: formData.differentialDiagnosis,
         instructions: formData.instructions || `${formData.secondaryDiagnosis ? `Secondary: ${formData.secondaryDiagnosis}` : ''}`,
-        finalNotes: formData.notes || 'Visit completed without additional tests'
+        finalNotes: formData.notes || 'Visit completed without additional tests',
+        countAsMedicalTreated
       });
 
       toast.success('Visit consultation completed! Patient moved to Results Queue for medication prescription.');

@@ -15,6 +15,8 @@
     "cleanup:demo": "node scripts/cleanup-demo-data.js",
     "seed:demo": "node scripts/seed-demo-data.js",
     "seed:all": "node scripts/seed-scripts/seed-everything.js",
+    "seed:diseases:csv": "node scripts/seed-diseases-from-csv.js",
+    "fix:cbc-template": "node scripts/update-cbc-template.js",
     "fix:h-pylori": "node scripts/fix-h-pylori-antigen-serology.js",
     "build:exe": "pkg . --targets node18-win-x64 --output dist/backend.exe",
     "service:install": "node scripts/install-windows-service.js",

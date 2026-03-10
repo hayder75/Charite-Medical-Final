@@ -388,6 +388,8 @@ model Billing {
   services            BillingService[]
   cardActivations     CardActivation[]     @relation("CardActivationBilling")
   cashTransactions    CashTransaction[]
+  labOrders           LabOrder[]
+  labTestOrders       LabTestOrder[]
 }
 
 model BillPayment {
@@ -618,6 +620,7 @@ model LabOrder {
   type            InvestigationType @relation(fields: [typeId], references: [id])
   visit           Visit?            @relation(fields: [visitId], references: [id])
   labResults      LabResult[]
+  billing         Billing?          @relation(fields: [billingId], references: [id])
 }
 
 model RadiologyOrder {
@@ -1170,6 +1173,7 @@ model LabTestOrder {
   patient      Patient         @relation(fields: [patientId], references: [id])
   visit        Visit?          @relation(fields: [visitId], references: [id])
   results      LabTestResult[]
+  billing      Billing?        @relation(fields: [billingId], references: [id])
 
   @@index([labTestId])
   @@index([batchOrderId])

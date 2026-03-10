@@ -136,6 +136,7 @@ const completeVisitSchema = z.object({
   diagnosisDetails: z.string().optional(), // Rich text diagnosis details
   instructions: z.string().optional(), // Patient instructions
   finalNotes: z.string().optional(),
+  countAsMedicalTreated: z.boolean().optional(),
   needsAppointment: z.boolean().optional(),
   appointmentDate: z.string().optional(),
   appointmentTime: z.string().optional(),
@@ -5658,10 +5659,10 @@ exports.generateVisitHistoryPDF = async (req, res) => {
 
 exports.completeVisit = async (req, res) => {
   try {
-    const { visitId, diagnosis, diagnosisDetails, instructions, finalNotes, needsAppointment, appointmentDate, appointmentTime, appointmentNotes } = completeVisitSchema.parse(req.body);
+    const { visitId, diagnosis, diagnosisDetails, instructions, finalNotes, countAsMedicalTreated, needsAppointment, appointmentDate, appointmentTime, appointmentNotes } = completeVisitSchema.parse(req.body);
     const doctorId = req.user.id;
 
-    console.log('🔍 Completing visit:', visitId, 'by doctor:', doctorId);
+    console.log('🔍 Completing visit:', visitId, 'by doctor:', doctorId, 'countAsMedicalTreated:', countAsMedicalTreated);
 
     // Check if visit exists
     const visit = await prisma.visit.findUnique({
@@ -5670,6 +5671,16 @@ exports.completeVisit = async (req, res) => {
 
     if (!visit) {
       return res.status(404).json({ error: 'Visit not found' });
+    }
+
+    // Build notes with marker if needed
+    let updatedNotes = visit.notes || '';
+    if (finalNotes) {
+      updatedNotes = `${updatedNotes}\n\nFinal Notes: ${finalNotes}`.trim();
+    }
+    if (countAsMedicalTreated) {
+      const markerTag = '[DERM_MEDICAL_TREATED]';
+      updatedNotes = `${updatedNotes}\n${markerTag}`.trim();
     }
 
     // Update visit status to COMPLETED directly (simplified)
@@ -5681,9 +5692,23 @@ exports.completeVisit = async (req, res) => {
         diagnosis: diagnosis || null,
         diagnosisDetails: diagnosisDetails || null,
         instructions: instructions || null,
-        notes: finalNotes ? `${visit.notes || ''}\n\nFinal Notes: ${finalNotes}` : visit.notes
+        notes: updatedNotes || null
       }
     });
+
+    // Create audit log for medical treated marking
+    if (countAsMedicalTreated) {
+      await prisma.auditLog.create({
+        data: {
+          userId: doctorId,
+          action: 'DERM_MEDICAL_TREATED_MARK',
+          entity: 'Visit',
+          entityId: visitId,
+          details: `Patient marked as medical treated by doctor`,
+          createdAt: new Date()
+        }
+      });
+    }
 
     // Create follow-up appointment if needed (outside transaction)
     if (needsAppointment && appointmentDate && appointmentTime) {
@@ -6286,7 +6311,7 @@ exports.getPrescriptionHistory = async (req, res) => {
 // Direct complete visit (for patients who don't need lab/radiology orders)
 exports.directCompleteVisit = async (req, res) => {
   try {
-    const { visitId } = req.body;
+    const { visitId, countAsMedicalTreated } = req.body;
     const doctorId = req.user.id;
 
     // Check if doctor is assigned to this visit
@@ -6317,6 +6342,30 @@ exports.directCompleteVisit = async (req, res) => {
         updatedAt: new Date()
       }
     });
+
+    // Handle medical treated marking for dermatology
+    if (countAsMedicalTreated) {
+      const markerTag = '[DERM_MEDICAL_TREATED]';
+      const currentNotes = visit.notes || '';
+      
+      await prisma.visit.update({
+        where: { id: visitId },
+        data: {
+          notes: `${currentNotes}\n${markerTag}`.trim()
+        }
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          userId: doctorId,
+          action: 'DERM_MEDICAL_TREATED_MARK',
+          entity: 'Visit',
+          entityId: visitId,
+          details: `Patient marked as medical treated by doctor`,
+          createdAt: new Date()
+        }
+      });
+    }
 
     res.json({
       success: true,

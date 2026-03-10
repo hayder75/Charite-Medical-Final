@@ -10,11 +10,15 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const PatientQueue = () => {
   const { user: currentUser } = useAuth();
+  const isDermatologyDoctor =
+    currentUser?.role === 'DERMATOLOGY' ||
+    (currentUser?.qualifications || []).some((q) => String(q || '').toUpperCase().includes('DERM'));
   const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [showPatientForm, setShowPatientForm] = useState(false);
   const [showCompleteConfirmModal, setShowCompleteConfirmModal] = useState(false);
+  const [countAsMedicalTreated, setCountAsMedicalTreated] = useState(false);
   const [dentalRecord, setDentalRecord] = useState(null);
   const dentalChartRef = useRef(null);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
@@ -269,6 +273,7 @@ const PatientQueue = () => {
 
   const handleCompleteVisit = () => {
     // Show custom confirmation modal
+    setCountAsMedicalTreated(false);
     setShowCompleteConfirmModal(true);
   };
 
@@ -312,7 +317,8 @@ const PatientQueue = () => {
         diagnosis: formData.primaryDiagnosis,
         diagnosisDetails: formData.differentialDiagnosis,
         instructions: formData.instructions || `${formData.secondaryDiagnosis ? `Secondary: ${formData.secondaryDiagnosis}` : ''}`,
-        finalNotes: formData.notes || 'Visit completed without additional tests'
+        finalNotes: formData.notes || 'Visit completed without additional tests',
+        countAsMedicalTreated: isDermatologyDoctor ? countAsMedicalTreated : false
       });
 
       toast.success('Visit consultation completed! Patient moved to Results Queue for medication prescription.');
@@ -1385,6 +1391,25 @@ const PatientQueue = () => {
                   ⚠️ This action cannot be undone. Once completed, the visit will be finalized.
                 </p>
               </div>
+
+              {isDermatologyDoctor && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={countAsMedicalTreated}
+                      onChange={(e) => setCountAsMedicalTreated(e.target.checked)}
+                      className="mt-1"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-blue-900">Count this patient as Medical treated?</p>
+                      <p className="text-xs text-blue-700 mt-1">
+                        Include this completed visit under Medical treated in Admin Doctor reports.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
 
               <div className="flex justify-end gap-3">
                 <button

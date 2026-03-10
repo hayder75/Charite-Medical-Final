@@ -63,7 +63,27 @@ exports.getOrders = async (req, res) => {
       })
     ]);
 
-    res.json({ batchOrders, walkInOrders, labTestOrders });
+    const labTestLinkedBatchIds = new Set(
+      labTestOrders.map((order) => order.batchOrderId).filter(Boolean)
+    );
+    const labTestLinkedVisitIds = new Set(
+      labTestOrders.map((order) => order.visitId).filter(Boolean)
+    );
+
+    const filteredBatchOrders = batchOrders.filter((order) => {
+      const hasServices = Array.isArray(order.services) && order.services.length > 0;
+      const linkedByBatchId = labTestLinkedBatchIds.has(order.id);
+      const linkedByVisitId = Boolean(order.visitId) && labTestLinkedVisitIds.has(order.visitId);
+      const looksLikeTemplatePlaceholder = /lab tests ordered by doctor/i.test(order.instructions || '');
+
+      // Hide legacy placeholder cards when the same request is already represented by labTestOrders.
+      if (!hasServices && (linkedByBatchId || linkedByVisitId || looksLikeTemplatePlaceholder)) {
+        return false;
+      }
+      return true;
+    });
+
+    res.json({ batchOrders: filteredBatchOrders, walkInOrders, labTestOrders });
   } catch (error) {
     console.error('Error fetching lab orders:', error);
     res.status(500).json({ error: error.message });
@@ -458,11 +478,33 @@ const getTemplates = async (req, res) => {
 
 const getOrders = async (req, res) => {
   try {
-    const { date } = req.query;
+    const { date, status } = req.query;
     const where = {};
-    
-    // Don't filter by status as frontend may send invalid values
-    // Just return all orders and let frontend filter if needed
+
+    const pendingStatuses = ['PAID', 'QUEUED', 'IN_PROGRESS'];
+    const completedStatuses = ['COMPLETED'];
+    const allVisibleStatuses = [...pendingStatuses, ...completedStatuses];
+    const statusList = status === 'COMPLETED'
+      ? completedStatuses
+      : status === 'ALL'
+        ? allVisibleStatuses
+        : pendingStatuses;
+
+    const batchStatusClause = status === 'COMPLETED'
+      ? { status: { in: completedStatuses } }
+      : status === 'ALL'
+        ? {
+          OR: [
+            { status: { in: allVisibleStatuses } },
+            { status: 'UNPAID', visit: { isEmergency: true } }
+          ]
+        }
+        : {
+          OR: [
+            { status: { in: pendingStatuses } },
+            { status: 'UNPAID', visit: { isEmergency: true } }
+          ]
+        };
     
     if (date) {
       const startOfDay = new Date(date);
@@ -475,25 +517,78 @@ const getOrders = async (req, res) => {
       };
     }
 
-    const [batchOrders, walkInOrders, labTestOrders] = await Promise.all([
+    const [batchOrders, walkInOrdersRaw, labTestOrdersRaw] = await Promise.all([
       prisma.batchOrder.findMany({
-        where: { type: 'LAB', ...where },
+        where: { type: 'LAB', ...batchStatusClause, ...where },
         include: { patient: true, services: { include: { investigationType: true } } },
         orderBy: { createdAt: 'desc' }
       }),
       prisma.labOrder.findMany({
-        where: { isWalkIn: true, ...where },
+        where: {
+          isWalkIn: true,
+          status: { in: statusList },
+          billingId: { not: null },
+          ...where
+        },
         include: { patient: true, type: true, labResults: true },
         orderBy: { createdAt: 'desc' }
       }),
       prisma.labTestOrder.findMany({
-        where,
-        include: { labTest: { include: { resultFields: { orderBy: { displayOrder: 'asc' } } } }, patient: true, doctor: true, results: true },
+        where: {
+          status: { in: statusList },
+          OR: [{ isWalkIn: false }, { isWalkIn: true, billingId: { not: null } }],
+          ...where
+        },
+        include: {
+          labTest: { include: { resultFields: { orderBy: { displayOrder: 'asc' } } } },
+          patient: true,
+          doctor: true,
+          results: true
+        },
         orderBy: { createdAt: 'desc' }
       })
     ]);
 
-    res.json({ batchOrders, walkInOrders, labTestOrders });
+    const billingIds = [...new Set([
+      ...walkInOrdersRaw.map((order) => order.billingId).filter(Boolean),
+      ...labTestOrdersRaw.filter((order) => order.isWalkIn).map((order) => order.billingId).filter(Boolean)
+    ])];
+
+    const paidBillingIds = billingIds.length
+      ? new Set(
+        (await prisma.billing.findMany({
+          where: {
+            id: { in: billingIds },
+            status: 'PAID'
+          },
+          select: { id: true }
+        })).map((billing) => billing.id)
+      )
+      : new Set();
+
+    const walkInOrders = walkInOrdersRaw.filter((order) => paidBillingIds.has(order.billingId));
+    const labTestOrders = labTestOrdersRaw.filter((order) => !order.isWalkIn || (order.billingId && paidBillingIds.has(order.billingId)));
+
+    const labTestLinkedBatchIds = new Set(
+      labTestOrders.map((order) => order.batchOrderId).filter(Boolean)
+    );
+    const labTestLinkedVisitIds = new Set(
+      labTestOrders.map((order) => order.visitId).filter(Boolean)
+    );
+
+    const filteredBatchOrders = batchOrders.filter((order) => {
+      const hasServices = Array.isArray(order.services) && order.services.length > 0;
+      const linkedByBatchId = labTestLinkedBatchIds.has(order.id);
+      const linkedByVisitId = Boolean(order.visitId) && labTestLinkedVisitIds.has(order.visitId);
+      const looksLikeTemplatePlaceholder = /lab tests ordered by doctor/i.test(order.instructions || '');
+
+      if (!hasServices && (linkedByBatchId || linkedByVisitId || looksLikeTemplatePlaceholder)) {
+        return false;
+      }
+      return true;
+    });
+
+    res.json({ batchOrders: filteredBatchOrders, walkInOrders, labTestOrders });
   } catch (error) {
     console.error('Error fetching lab orders:', error);
     res.status(500).json({ error: error.message });

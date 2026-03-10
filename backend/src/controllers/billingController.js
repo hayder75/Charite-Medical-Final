@@ -25,7 +25,7 @@ const CARD_REGISTRATION_SERVICE_DEFINITIONS = {
   DERMATOLOGY: {
     code: 'CARD-REG-DERM',
     name: 'Dermatology Patient Card Registration',
-    price: 200,
+    price: 400,
     description: 'Initial dermatology patient card registration fee (first time only)'
   }
 };
@@ -38,16 +38,25 @@ const normalizeCardType = (value) => {
 const getOrCreateCardRegistrationService = async (cardType) => {
   const config = CARD_REGISTRATION_SERVICE_DEFINITIONS[cardType] || CARD_REGISTRATION_SERVICE_DEFINITIONS.GENERAL;
 
-  return prisma.service.upsert({
-    where: { code: config.code },
-    update: {
-      name: config.name,
-      category: 'CONSULTATION',
-      price: config.price,
-      description: config.description,
-      isActive: true
-    },
-    create: {
+  const existingService = await prisma.service.findUnique({
+    where: { code: config.code }
+  });
+
+  if (existingService) {
+    if (!existingService.isActive || existingService.category !== 'CONSULTATION') {
+      return prisma.service.update({
+        where: { id: existingService.id },
+        data: {
+          isActive: true,
+          category: 'CONSULTATION'
+        }
+      });
+    }
+    return existingService;
+  }
+
+  return prisma.service.create({
+    data: {
       code: config.code,
       name: config.name,
       category: 'CONSULTATION',

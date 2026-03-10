@@ -8,6 +8,30 @@ import { checkLabTemplateStandard, checkLabFieldStandard } from '../../utils/med
 import { checkValueInNormalRange } from '../../utils/normalRangeParser';
 import { generateDefaultResults } from '../../utils/labDefaultValues';
 
+const getDateToken = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '00000000';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+};
+
+const toSmallSequence = (raw) => {
+  const input = String(raw ?? '');
+  if (!input) return '000';
+  if (/^\d+$/.test(input)) {
+    return String(parseInt(input, 10) % 1000 || parseInt(input, 10)).padStart(3, '0').slice(-3);
+  }
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash + input.charCodeAt(i) * (i + 1)) % 1000;
+  }
+  return String(hash || 1).padStart(3, '0');
+};
+
+const formatDisplayOrderId = (order) => `${getDateToken(order?.createdAt)}-${toSmallSequence(order?.id)}`;
+
 const LabOrders = () => {
   const { user } = useAuth();
   const [orders, setOrders] = useState([]);
@@ -58,7 +82,7 @@ const LabOrders = () => {
       }
 
       // Group labTestOrders by patient+visit to show all tests for same patient in one card
-      const labTestOrders = response.data.labTestOrders || [];
+      const labTestOrders = (response.data.labTestOrders || []).filter((order) => Boolean(order.labTest));
       const groupedLabOrders = [];
       
       // Group by visitId or batchOrderId or patientId for walk-ins
@@ -82,30 +106,49 @@ const LabOrders = () => {
             updatedAt: order.updatedAt,
             status: order.status,
             isWalkIn: order.isWalkIn,
+            billingId: order.billingId || null,
             __kind: 'labtest_group',
             orders: []
           };
         }
         // Add this order to the group
         groups[groupKey].orders.push(order);
-        // Update group status - if any order is not completed, group is not completed
-        if (order.status !== 'COMPLETED') {
-          groups[groupKey].status = order.status;
+        const groupStatuses = groups[groupKey].orders.map((o) => o.status);
+        if (groupStatuses.every((s) => s === 'COMPLETED')) {
+          groups[groupKey].status = 'COMPLETED';
+        } else if (groupStatuses.some((s) => s === 'IN_PROGRESS')) {
+          groups[groupKey].status = 'IN_PROGRESS';
+        } else if (groupStatuses.some((s) => s === 'QUEUED' || s === 'PAID')) {
+          groups[groupKey].status = 'QUEUED';
         }
       });
       
       // Convert grouped object to array
       Object.values(groups).forEach(group => {
-        groupedLabOrders.push(group);
+        if ((group.orders || []).length > 0) {
+          groupedLabOrders.push(group);
+        }
       });
       
       console.log('📋 [fetchOrders] Grouped lab test orders:', groupedLabOrders.length, 'groups with', labTestOrders.length, 'total tests');
+
+      const groupedWalkInKeys = new Set(
+        groupedLabOrders
+          .filter((group) => group.isWalkIn)
+          .map((group) => group.billingId || `${group.patient?.id}-${new Date(group.createdAt).toDateString()}`)
+      );
+
+      const dedupedLegacyWalkInOrders = (response.data.walkInOrders || []).filter((order) => {
+        if (!order.type) return false;
+        const key = order.billingId || `${order.patient?.id}-${new Date(order.createdAt).toDateString()}`;
+        return !groupedWalkInKeys.has(key);
+      });
 
       // Combine all order types: old batch orders, old walk-in orders, and new grouped lab test orders
       // Add __kind to each to avoid ID collisions in the list
       const allOrders = [
         ...(response.data.batchOrders || []).map(o => ({ ...o, __kind: 'batch' })),
-        ...(response.data.walkInOrders || []).map(o => ({ ...o, __kind: 'walkin' })),
+        ...dedupedLegacyWalkInOrders.map(o => ({ ...o, __kind: 'walkin' })),
         ...groupedLabOrders
       ];
       setOrders(allOrders);
@@ -701,6 +744,7 @@ const LabOrders = () => {
 
       const patientAge = patient.dob ? calculateAge(patient.dob) : (patient.age || 'N/A');
       const patientBloodType = patient.bloodType || 'N/A';
+      const displayOrderId = formatDisplayOrderId(orderData);
 
       printWindow.document.write(`
       <!DOCTYPE html>
@@ -976,7 +1020,7 @@ const LabOrders = () => {
               </div>
               <div class="info-item">
                 <span class="info-label">Order ID</span>
-                <span class="info-value">#${orderData.id || 'N/A'}</span>
+                <span class="info-value">${displayOrderId}</span>
               </div>
               <div class="info-item">
                 <span class="info-label">Ref. Doctor</span>
@@ -1467,7 +1511,7 @@ const LabOrders = () => {
                         {order.patient.name}
                       </h3>
                       <span className="text-xs text-gray-500 font-normal">
-                        (#{order.id})
+                        ({formatDisplayOrderId(order)})
                       </span>
                       {order.__kind === 'labtest_group' && (
                         <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-800 text-xs rounded">
@@ -1541,7 +1585,7 @@ const LabOrders = () => {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-xl font-semibold text-gray-900">
-                  {selectedOrder.status === 'COMPLETED' ? 'Lab Results' : 'Lab Services'} - {selectedOrder.__kind === 'labtest_group' ? `Group #${selectedOrder.id}` : `Order #${selectedOrder.id}`}
+                  {selectedOrder.status === 'COMPLETED' ? 'Lab Results' : 'Lab Services'} - {selectedOrder.__kind === 'labtest_group' ? `Group ${formatDisplayOrderId(selectedOrder)}` : `Order ${formatDisplayOrderId(selectedOrder)}`}
                   {selectedOrder.__kind === 'labtest_group' && selectedOrder.orders && (
                     <span className="ml-2 text-sm font-normal text-purple-600">
                       ({selectedOrder.orders.length} tests)

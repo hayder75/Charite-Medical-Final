@@ -72,29 +72,37 @@ const ProcedureOrdering = ({ visit, onOrdersPlaced }) => {
 
             const procedureOrders = (visitData.batchOrders || [])
                 .filter(order => order.type === 'PROCEDURE')
-                // Standardize format to match what we show in history
                 .flatMap(bo => bo.services?.map(s => ({
                     id: s.id,
                     batchOrderId: bo.id,
+                    serviceId: s.serviceId,
                     name: s.service?.name || 'Procedure',
                     status: s.status || bo.status,
-                    createdAt: bo.createdAt,
+                    createdAt: s.createdAt || bo.createdAt,
                     instructions: s.instructions || bo.instructions,
-                    isBatch: true
+                    isBatch: true,
+                    assignedNurseName: null,
+                    assignedByName: bo.doctor?.fullname || null
                 })) || []);
 
             const nurseProcedures = (visitData.nurseServiceAssignments || [])
                 .filter(ns => ns.service?.category === 'PROCEDURE')
                 .map(ns => ({
                     id: ns.id,
+                    serviceId: ns.serviceId,
                     name: ns.service?.name || 'Procedure',
                     status: ns.status,
                     createdAt: ns.createdAt,
                     instructions: ns.notes,
-                    isNurseService: true
+                    isNurseService: true,
+                    assignedNurseName: ns.assignedNurse?.fullname || null,
+                    assignedByName: ns.assignedBy?.fullname || null
                 }));
 
-            setExistingOrders([...procedureOrders, ...nurseProcedures]);
+            const merged = [...procedureOrders, ...nurseProcedures].sort(
+                (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+            );
+            setExistingOrders(merged);
         } catch (error) {
             console.error('Error fetching existing procedure orders:', error);
         }
@@ -295,57 +303,62 @@ const ProcedureOrdering = ({ visit, onOrdersPlaced }) => {
                     <div className="flex justify-between items-center mb-4">
                         <h4 className="font-semibold text-gray-900 flex items-center gap-2">
                             <Clock className="h-4 w-4 text-indigo-500" />
-                            Current Procedure Orders ({existingOrders.reduce((acc, curr) => acc + (curr.services?.length || 0), 0)})
+                            Current Procedure Orders ({existingOrders.length})
                         </h4>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {existingOrders.map((batch) => (
-                            <React.Fragment key={batch.id}>
-                                {(batch.services || []).map((service) => (
-                                    <div key={service.id} className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex justify-between items-center transition-all hover:border-indigo-200">
-                                        <div className="flex flex-col">
-                                            <span className="font-medium text-sm text-gray-900">{service.service?.name}</span>
-                                            {service.instructions && (
-                                                <span className="text-[11px] text-gray-500 mt-1 italic">
-                                                    Note: {service.instructions}
-                                                </span>
-                                            )}
-                                            <span className="text-[10px] text-gray-400 mt-0.5">Order #{batch.id} • {new Date(batch.createdAt).toLocaleDateString()}</span>
-                                        </div>
-                                        <div className="flex flex-col items-end gap-2">
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${service.status === 'PAID' ? 'bg-green-100 text-green-700' :
-                                                service.status === 'COMPLETED' ? 'bg-blue-100 text-blue-700' :
-                                                    service.status === 'QUEUED' ? 'bg-yellow-100 text-yellow-700' :
-                                                        'bg-orange-100 text-orange-700'
-                                                }`}>
-                                                {service.status === 'UNPAID' ? 'Awaiting Payment' : service.status}
-                                            </span>
+                        {existingOrders.map((order) => (
+                            <div key={`${order.isBatch ? 'batch' : 'nurse'}-${order.id}`} className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex justify-between items-center transition-all hover:border-indigo-200">
+                                <div className="flex flex-col">
+                                    <span className="font-medium text-sm text-gray-900">{order.name}</span>
+                                    {order.instructions && (
+                                        <span className="text-[11px] text-gray-500 mt-1 italic">
+                                            Note: {order.instructions}
+                                        </span>
+                                    )}
+                                    <span className="text-[10px] text-gray-400 mt-0.5">
+                                        {order.isBatch ? `Order #${order.batchOrderId}` : 'Nurse Assignment'} • {new Date(order.createdAt).toLocaleDateString()}
+                                    </span>
+                                    {order.assignedNurseName && (
+                                        <span className="text-[10px] text-gray-500 mt-0.5">Assigned Nurse: {order.assignedNurseName}</span>
+                                    )}
+                                    {order.assignedByName && (
+                                        <span className="text-[10px] text-gray-500 mt-0.5">Assigned By: {order.assignedByName}</span>
+                                    )}
+                                </div>
+                                <div className="flex flex-col items-end gap-2">
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${order.status === 'PAID' ? 'bg-green-100 text-green-700' :
+                                        order.status === 'COMPLETED' ? 'bg-blue-100 text-blue-700' :
+                                            order.status === 'QUEUED' ? 'bg-yellow-100 text-yellow-700' :
+                                                order.status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
+                                                    'bg-orange-100 text-orange-700'
+                                        }`}>
+                                        {order.status === 'UNPAID' ? 'Awaiting Payment' : order.status}
+                                    </span>
 
-                                            {service.status !== 'COMPLETED' && (
-                                                <button
-                                                    onClick={() => handleCompleteProcedure(batch.id, service.serviceId)}
-                                                    disabled={completingId === `${batch.id}-${service.serviceId}`}
-                                                    className="bg-green-600 hover:bg-green-700 text-white text-[10px] font-semibold px-4 py-1.5 rounded-md transition-all whitespace-nowrap"
-                                                >
-                                                    {completingId === `${batch.id}-${service.serviceId}` ? (
-                                                        <div className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
-                                                    ) : (
-                                                        'Complete Procedure'
-                                                    )}
-                                                </button>
+                                    {order.isBatch && order.status !== 'COMPLETED' && (
+                                        <button
+                                            onClick={() => handleCompleteProcedure(order.batchOrderId, order.serviceId)}
+                                            disabled={completingId === `${order.batchOrderId}-${order.serviceId}`}
+                                            className="bg-green-600 hover:bg-green-700 text-white text-[10px] font-semibold px-4 py-1.5 rounded-md transition-all whitespace-nowrap"
+                                        >
+                                            {completingId === `${order.batchOrderId}-${order.serviceId}` ? (
+                                                <div className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
+                                            ) : (
+                                                'Complete Procedure'
                                             )}
+                                        </button>
+                                    )}
 
-                                            {service.status === 'COMPLETED' && (
-                                                <span className="flex items-center gap-1 text-blue-600 font-bold text-[10px] bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                                                    <CheckCircle className="h-3 w-3" />
-                                                    DONE
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </React.Fragment>
+                                    {order.status === 'COMPLETED' && (
+                                        <span className="flex items-center gap-1 text-blue-600 font-bold text-[10px] bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                                            <CheckCircle className="h-3 w-3" />
+                                            DONE
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
                         ))}
                     </div>
                 </div>

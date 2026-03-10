@@ -1,11 +1,113 @@
 const prisma = require('../config/database');
 
+const normalizeOptionalText = (value) => {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (text.toUpperCase() === 'N/A') return null;
+  return text;
+};
+
+const parseGender = (value) => {
+  const text = normalizeOptionalText(value);
+  if (!text) return null;
+
+  switch (text.toLowerCase()) {
+    case 'male':
+    case 'm':
+      return 'MALE';
+    case 'female':
+    case 'f':
+      return 'FEMALE';
+    case 'other':
+      return 'OTHER';
+    default:
+      return null;
+  }
+};
+
+const parseAge = (value) => {
+  const text = normalizeOptionalText(value);
+  if (!text) return null;
+
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 130) {
+    return null;
+  }
+  return parsed;
+};
+
+const parseBloodType = (value) => {
+  const text = normalizeOptionalText(value);
+  if (!text) return null;
+
+  const normalized = text.toUpperCase().replace(/\s+/g, '');
+  const map = {
+    'A+': 'A_PLUS',
+    'A-': 'A_MINUS',
+    'B+': 'B_PLUS',
+    'B-': 'B_MINUS',
+    'AB+': 'AB_PLUS',
+    'AB-': 'AB_MINUS',
+    'O+': 'O_PLUS',
+    'O-': 'O_MINUS',
+    UNKNOWN: 'UNKNOWN'
+  };
+  return map[normalized] || null;
+};
+
+const formatBloodTypeForPrint = (enumValue) => {
+  const map = {
+    A_PLUS: 'A+',
+    A_MINUS: 'A-',
+    B_PLUS: 'B+',
+    B_MINUS: 'B-',
+    AB_PLUS: 'AB+',
+    AB_MINUS: 'AB-',
+    O_PLUS: 'O+',
+    O_MINUS: 'O-',
+    UNKNOWN: 'Unknown'
+  };
+  return map[enumValue] || null;
+};
+
+const extractWalkInMetadata = ({ gender, age, bloodType, referringDoctor }) => {
+  const normalizedGender = parseGender(gender);
+  const normalizedAge = parseAge(age);
+  const normalizedBloodType = parseBloodType(bloodType);
+  const normalizedReferringDoctor = normalizeOptionalText(referringDoctor);
+
+  return {
+    patientData: {
+      ...(normalizedGender ? { gender: normalizedGender } : {}),
+      ...(normalizedAge ? { age: normalizedAge } : {}),
+      ...(normalizedBloodType ? { bloodType: normalizedBloodType } : {})
+    },
+    printable: {
+      ...(normalizedGender ? { gender: normalizedGender } : {}),
+      ...(normalizedAge ? { age: normalizedAge } : {}),
+      ...(normalizedBloodType ? { bloodType: formatBloodTypeForPrint(normalizedBloodType) } : {}),
+      ...(normalizedReferringDoctor ? { referringDoctor: normalizedReferringDoctor } : {})
+    }
+  };
+};
+
+const buildWalkInBillingNotes = (baseNote, customNotes, printableMeta) => {
+  const lines = [normalizeOptionalText(customNotes) || baseNote];
+  if (printableMeta.gender) lines.push(`Gender: ${printableMeta.gender}`);
+  if (printableMeta.age) lines.push(`Age: ${printableMeta.age}`);
+  if (printableMeta.bloodType) lines.push(`Blood Type: ${printableMeta.bloodType}`);
+  if (printableMeta.referringDoctor) lines.push(`Referring Doctor: ${printableMeta.referringDoctor}`);
+  return lines.join('\n');
+};
+
 /**
  * Create a walk-in lab order for an outsider (non-patient) - NEW SYSTEM
  */
 const createWalkInLabOrder = async (req, res) => {
   try {
-    const { name, phone, labTestIds, notes } = req.body;
+    const { name, phone, labTestIds, notes, gender, age, bloodType, referringDoctor } = req.body;
+    const metadata = extractWalkInMetadata({ gender, age, bloodType, referringDoctor });
 
     if (!name || !phone || !labTestIds || !Array.isArray(labTestIds) || labTestIds.length === 0) {
       return res.status(400).json({
@@ -51,7 +153,8 @@ const createWalkInLabOrder = async (req, res) => {
             mobile: phone,
             type: 'REGULAR',
             status: 'Active',
-            cardStatus: 'INACTIVE'
+            cardStatus: 'INACTIVE',
+            ...metadata.patientData
           }
         });
         break;
@@ -85,7 +188,7 @@ const createWalkInLabOrder = async (req, res) => {
         patientId: outsiderId,
         totalAmount: totalAmount,
         status: 'PENDING',
-        notes: notes || 'Walk-in lab order',
+        notes: buildWalkInBillingNotes('Walk-in lab order', notes, metadata.printable),
         services: {
           create: labTests.map(test => ({
             serviceId: test.serviceId,
@@ -145,7 +248,9 @@ const createWalkInLabOrder = async (req, res) => {
  */
 const createWalkInRadiologyOrder = async (req, res) => {
   try {
-    const { name, phone, testTypes, notes } = req.body;
+    const { name, phone, testTypes, notes, gender, age, bloodType, referringDoctor } = req.body;
+
+    const metadata = extractWalkInMetadata({ gender, age, bloodType, referringDoctor });
 
     // Generate unique ID: RAD-YYYYMMDD-NNN
     const today = new Date();
@@ -185,7 +290,8 @@ const createWalkInRadiologyOrder = async (req, res) => {
             mobile: phone,
             type: 'REGULAR',
             status: 'Active',
-            cardStatus: 'INACTIVE'
+            cardStatus: 'INACTIVE',
+            ...metadata.patientData
           }
         });
         break;
@@ -219,7 +325,7 @@ const createWalkInRadiologyOrder = async (req, res) => {
         patientId: outsiderId,
         totalAmount: totalAmount,
         status: 'PENDING',
-        notes: notes || 'Walk-in radiology order',
+        notes: buildWalkInBillingNotes('Walk-in radiology order', notes, metadata.printable),
         services: {
           create: investigationTypes.map(type => ({
             serviceId: type.serviceId || type.service?.id,

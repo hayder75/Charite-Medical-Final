@@ -8,7 +8,15 @@ import toast from 'react-hot-toast';
 
 const BillingWalkInOrders = () => {
     const [activeTab, setActiveTab] = useState('lab'); // 'lab' or 'radiology'
-    const [formData, setFormData] = useState({ name: '', phone: '', notes: '' });
+    const [formData, setFormData] = useState({
+        name: '',
+        phone: '',
+        gender: '',
+        age: '',
+        bloodType: '',
+        referringDoctor: '',
+        notes: ''
+    });
     const [selectedTestIds, setSelectedTestIds] = useState(new Set());
     const [organizedTests, setOrganizedTests] = useState({});
     const [radiologyTypes, setRadiologyTypes] = useState([]);
@@ -176,6 +184,10 @@ const BillingWalkInOrders = () => {
                 const response = await api.post('/walk-in-orders/lab', {
                     name: formData.name,
                     phone: formData.phone,
+                    gender: formData.gender,
+                    age: formData.age,
+                    bloodType: formData.bloodType,
+                    referringDoctor: formData.referringDoctor,
                     labTestIds: Array.from(selectedTestIds),
                     notes: formData.notes
                 });
@@ -184,13 +196,25 @@ const BillingWalkInOrders = () => {
                 const response = await api.post('/walk-in-orders/radiology', {
                     name: formData.name,
                     phone: formData.phone,
+                    gender: formData.gender,
+                    age: formData.age,
+                    bloodType: formData.bloodType,
+                    referringDoctor: formData.referringDoctor,
                     testTypes: Array.from(selectedTestIds).map(id => parseInt(id)),
                     notes: formData.notes
                 });
                 toast.success(`Walk-in radiology order created! ID: ${response.data.outsider.id}`);
             }
 
-            setFormData({ name: '', phone: '', notes: '' });
+            setFormData({
+                name: '',
+                phone: '',
+                gender: '',
+                age: '',
+                bloodType: '',
+                referringDoctor: '',
+                notes: ''
+            });
             setSelectedTestIds(new Set());
         } catch (error) {
             console.error('Error creating walk-in order:', error);
@@ -268,6 +292,63 @@ const BillingWalkInOrders = () => {
                                     onChange={handleInputChange}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Gender (Optional)</label>
+                                <select
+                                    name="gender"
+                                    value={formData.gender}
+                                    onChange={handleInputChange}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">Leave empty</option>
+                                    <option value="MALE">Male</option>
+                                    <option value="FEMALE">Female</option>
+                                    <option value="OTHER">Other</option>
+                                    <option value="N/A">N/A</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Age (Optional)</label>
+                                <input
+                                    type="text"
+                                    name="age"
+                                    value={formData.age}
+                                    onChange={handleInputChange}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="e.g. 27 or N/A"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Blood Type (Optional)</label>
+                                <select
+                                    name="bloodType"
+                                    value={formData.bloodType}
+                                    onChange={handleInputChange}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">Leave empty</option>
+                                    <option value="A+">A+</option>
+                                    <option value="A-">A-</option>
+                                    <option value="B+">B+</option>
+                                    <option value="B-">B-</option>
+                                    <option value="AB+">AB+</option>
+                                    <option value="AB-">AB-</option>
+                                    <option value="O+">O+</option>
+                                    <option value="O-">O-</option>
+                                    <option value="N/A">N/A</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Referring Doctor (Optional)</label>
+                                <input
+                                    type="text"
+                                    name="referringDoctor"
+                                    value={formData.referringDoctor}
+                                    onChange={handleInputChange}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Leave empty or type N/A"
                                 />
                             </div>
                         </div>

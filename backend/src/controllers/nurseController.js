@@ -722,11 +722,7 @@ exports.getTodayTasks = async (req, res) => {
     const nurseServiceTasks = await prisma.nurseServiceAssignment.findMany({
       where: {
         assignedNurseId: nurseId,
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
-        createdAt: {
-          gte: today,
-          lt: tomorrow,
-        },
+        status: { in: ['PENDING', 'IN_PROGRESS'] }
       },
       include: {
         visit: {
@@ -748,7 +744,8 @@ exports.getTodayTasks = async (req, res) => {
       orderBy: { createdAt: 'asc' }
     });
 
-    // Group tasks by patient and filter only paid services
+    // Group tasks by patient; keep payment visibility in the payload,
+    // but do not hide assigned tasks when billing is pending/partial.
     const groupedTasks = {};
 
     for (const task of nurseServiceTasks) {
@@ -778,53 +775,47 @@ exports.getTodayTasks = async (req, res) => {
         }
       });
 
-      // Only include tasks for paid services
-      if (billing) {
-        // Calculate total payments
-        const totalPayments = billing.payments.reduce((sum, payment) => sum + payment.amount, 0);
-        const isFullyPaid = billing.status === 'PAID' || totalPayments >= billing.totalAmount;
+      const totalPayments = billing?.payments?.reduce((sum, payment) => sum + payment.amount, 0) || 0;
+      const totalAmount = billing?.totalAmount || 0;
+      const isFullyPaid = billing ? (billing.status === 'PAID' || totalPayments >= totalAmount) : false;
 
-        // Only include if fully paid
-        if (isFullyPaid) {
-          if (!groupedTasks[patientId]) {
-            groupedTasks[patientId] = {
-              patientId,
-              patientName,
-              visitId: task.visitId,
-              visitUid: task.visit.visitUid,
-              services: [],
-              totalAmount: 0,
-              assignedBy: task.assignedBy.fullname,
-              assignedByRole: task.assignedBy.role,
-              orderType: task.orderType || 'TRIAGE_ORDERED',
-              createdAt: task.createdAt,
-              type: 'nurseService',
-              billingStatus: billing.status,
-              totalPayments: totalPayments,
-              isFullyPaid: isFullyPaid
-            };
-          }
-
-          const servicePrice = task.isWaived ? 0 : (task.customPrice || task.service.price || 0);
-          groupedTasks[patientId].services.push({
-            id: task.id,
-            serviceId: task.service.id,
-            serviceName: task.service.name,
-            servicePrice: servicePrice, // Show $0 if waived
-            originalPrice: task.customPrice || task.service.price || 0, // Keep custom/original price for reference
-            serviceDescription: task.service.description,
-            serviceCategory: task.service.category, // Add category to distinguish nurse vs dental
-            isWaived: task.isWaived || false, // Include waived status
-            status: task.status,
-            notes: task.notes,
-            orderType: task.orderType || 'TRIAGE_ORDERED',
-            assignedBy: task.assignedBy.fullname,
-            assignedByRole: task.assignedBy.role
-          });
-
-          groupedTasks[patientId].totalAmount += servicePrice;
-        }
+      if (!groupedTasks[patientId]) {
+        groupedTasks[patientId] = {
+          patientId,
+          patientName,
+          visitId: task.visitId,
+          visitUid: task.visit.visitUid,
+          services: [],
+          totalAmount: 0,
+          assignedBy: task.assignedBy.fullname,
+          assignedByRole: task.assignedBy.role,
+          orderType: task.orderType || 'TRIAGE_ORDERED',
+          createdAt: task.createdAt,
+          type: 'nurseService',
+          billingStatus: billing?.status || 'PENDING',
+          totalPayments,
+          isFullyPaid
+        };
       }
+
+      const servicePrice = task.isWaived ? 0 : (task.customPrice || task.service.price || 0);
+      groupedTasks[patientId].services.push({
+        id: task.id,
+        serviceId: task.service.id,
+        serviceName: task.service.name,
+        servicePrice: servicePrice, // Show $0 if waived
+        originalPrice: task.customPrice || task.service.price || 0, // Keep custom/original price for reference
+        serviceDescription: task.service.description,
+        serviceCategory: task.service.category, // Add category to distinguish nurse vs dental
+        isWaived: task.isWaived || false, // Include waived status
+        status: task.status,
+        notes: task.notes,
+        orderType: task.orderType || 'TRIAGE_ORDERED',
+        assignedBy: task.assignedBy.fullname,
+        assignedByRole: task.assignedBy.role
+      });
+
+      groupedTasks[patientId].totalAmount += servicePrice;
     }
 
     // Fetch continuous infusion tasks for today (any nurse can handle these)

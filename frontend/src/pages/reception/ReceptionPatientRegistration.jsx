@@ -201,7 +201,7 @@ const ReceptionPatientRegistration = () => {
         try {
           const activateResponse = await api.post('/reception/activate-card', {
             patientId: patient.id,
-            notes: 'Card activation for returning patient visit'
+            notes: 'Card activation for repeat patient visit'
           });
 
           setSelectedPatient(patient);
@@ -229,7 +229,7 @@ const ReceptionPatientRegistration = () => {
       // Create visit for existing patient (card is active, goes straight to triage)
       const visitResponse = await api.post('/reception/visits', {
         patientId: patient.id,
-        notes: visitType === 'EMERGENCY' ? 'Emergency visit for existing patient' : 'Returning patient visit',
+        notes: visitType === 'EMERGENCY' ? 'Emergency visit for existing patient' : 'Repeat patient visit',
         queueType: 'CONSULTATION',
         isEmergency: visitType === 'EMERGENCY'
       });
@@ -343,7 +343,7 @@ const ReceptionPatientRegistration = () => {
           >
             <div className="text-center">
               <Search className="h-10 w-10 text-primary-600 mx-auto mb-3" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-1">Returning Patient</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">Repeat Patient</h3>
               <p className="text-gray-600">Search for an existing patient</p>
             </div>
           </div>
@@ -465,12 +465,12 @@ const ReceptionPatientRegistration = () => {
                   <label className="label">Card Type *</label>
                   <select className="input" {...register('cardType', { required: 'Card type is required' })}>
                     <option value="">Select Card Type</option>
-                    <option value="GENERAL">General Card</option>
+                    <option value="GENERAL">Medical Card</option>
                     <option value="DERMATOLOGY">Dermatology Card</option>
                   </select>
                   {errors.cardType && <p className="text-red-500 text-sm mt-1">{errors.cardType.message}</p>}
                   <p className="text-xs text-gray-600 mt-1">
-                    💡 <strong>General Card:</strong> Standard medical services<br/>
+                    💡 <strong>Medical Card:</strong> Standard medical services<br/>
                     💡 <strong>Dermatology Card:</strong> Skin specialist services
                   </p>
                 </div>

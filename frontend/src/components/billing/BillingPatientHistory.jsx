@@ -83,6 +83,41 @@ const BillingPatientHistory = () => {
     return age;
   };
 
+  const normalizeOptionalValue = (value) => {
+    if (value === undefined || value === null) return null;
+    const text = String(value).trim();
+    if (!text || text.toUpperCase() === 'N/A') return null;
+    return text;
+  };
+
+  const formatBloodType = (value) => {
+    const map = {
+      A_PLUS: 'A+',
+      A_MINUS: 'A-',
+      B_PLUS: 'B+',
+      B_MINUS: 'B-',
+      AB_PLUS: 'AB+',
+      AB_MINUS: 'AB-',
+      O_PLUS: 'O+',
+      O_MINUS: 'O-',
+      UNKNOWN: 'Unknown'
+    };
+    return map[value] || normalizeOptionalValue(value);
+  };
+
+  const extractMetaFromNotes = (notes, label) => {
+    if (!notes) return null;
+    const match = String(notes).match(new RegExp(`${label}:\\s*([^\\n]+)`, 'i'));
+    return normalizeOptionalValue(match?.[1]);
+  };
+
+  const escapeHtml = (value) => String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
   // Print Medications - Matching MedicationOrdering.jsx style
   const handlePrintMedications = () => {
     // Check both medications and medicationOrders
@@ -434,6 +469,19 @@ const BillingPatientHistory = () => {
     const isEmergency =
       billing.status === "EMERGENCY_PENDING" || billing.isEmergency;
 
+    const patientData = billing.patient || patientHistory?.patient || {};
+    const receiptGender = normalizeOptionalValue(patientData.gender) || extractMetaFromNotes(billing.notes, 'Gender');
+    const receiptAge = normalizeOptionalValue(patientData.age) || extractMetaFromNotes(billing.notes, 'Age');
+    const receiptBloodType = formatBloodType(patientData.bloodType) || extractMetaFromNotes(billing.notes, 'Blood Type');
+    const referringDoctor = extractMetaFromNotes(billing.notes, 'Referring Doctor');
+
+    const optionalRows = [
+      receiptGender ? `<div><span class="info-label">Gender:</span> ${escapeHtml(receiptGender)}</div>` : '',
+      receiptAge ? `<div><span class="info-label">Age:</span> ${escapeHtml(receiptAge)}</div>` : '',
+      receiptBloodType ? `<div><span class="info-label">Blood Type:</span> ${escapeHtml(receiptBloodType)}</div>` : '',
+      referringDoctor ? `<div><span class="info-label">Referring Doctor:</span> ${escapeHtml(referringDoctor)}</div>` : ''
+    ].filter(Boolean).join('');
+
     const content = `
       <!DOCTYPE html>
       <html>
@@ -485,6 +533,7 @@ const BillingPatientHistory = () => {
                 <div><span class="info-label">ID:</span> #${patientId}</div>
                 <div><span class="info-label">Billing:</span> #${billingId}</div>
                 <div><span class="info-label">Status:</span> ${(billing.status || '').replace(/_/g, " ")}</div>
+                ${optionalRows}
               </div>
             </div>
 

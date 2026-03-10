@@ -199,6 +199,7 @@ const PatientConsultationPage = () => {
   const [showCompleteConfirmModal, setShowCompleteConfirmModal] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completingVisit, setCompletingVisit] = useState(false);
+  const [countAsMedicalTreated, setCountAsMedicalTreated] = useState(false);
   const [completeForm, setCompleteForm] = useState({
     needsAppointment: false,
     appointmentDate: '',
@@ -234,6 +235,13 @@ const PatientConsultationPage = () => {
     const result = currentUser?.qualifications?.includes('Dentist') || false;
     console.debug('[Consultation] isDentalSpecialist calculated:', result, 'from qualifications:', currentUser?.qualifications);
     return result;
+  }, [currentUser]);
+
+  const isDermatologyDoctor = useMemo(() => {
+    const qualifications = Array.isArray(currentUser?.qualifications)
+      ? currentUser.qualifications.map((q) => String(q || '').toUpperCase())
+      : [];
+    return currentUser?.role === 'DERMATOLOGY' || qualifications.some((q) => q.includes('DERM'));
   }, [currentUser]);
 
   // Memoize tabs array to prevent recreation on every render
@@ -538,6 +546,7 @@ const PatientConsultationPage = () => {
   // Complete Visit Functions
   const handleCompleteVisit = () => {
     // Show custom confirmation modal
+    setCountAsMedicalTreated(false);
     setShowCompleteConfirmModal(true);
   };
 
@@ -563,6 +572,7 @@ const PatientConsultationPage = () => {
         diagnosisDetails: '', // Will be extracted from diagnosis notes
         instructions: '', // Will be extracted from diagnosis notes
         finalNotes: '', // Will be extracted from diagnosis notes
+        countAsMedicalTreated: isDermatologyDoctor ? countAsMedicalTreated : false,
         needsAppointment: completeForm.needsAppointment,
         appointmentDate: completeForm.appointmentDate,
         appointmentTime: completeForm.appointmentTime,
@@ -3275,6 +3285,25 @@ const PatientConsultationPage = () => {
                     ⚠️ This action cannot be undone. Once completed, the visit will be finalized.
                   </p>
                 </div>
+
+                {isDermatologyDoctor && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={countAsMedicalTreated}
+                        onChange={(e) => setCountAsMedicalTreated(e.target.checked)}
+                        className="mt-1"
+                      />
+                      <div>
+                        <p className="text-sm font-semibold text-blue-900">Count this patient as Medical treated?</p>
+                        <p className="text-xs text-blue-700 mt-1">
+                          If checked, this completion is counted in Admin Doctor Reports under Medical Treated (Dermatology).
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
 
                 <div className="flex justify-end gap-3">
                   <button

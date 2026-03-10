@@ -155,7 +155,7 @@ const PatientRegistration = () => {
           try {
             const activateResponse = await api.post('/reception/activate-card', {
               patientId: patient.id,
-              notes: 'Card activation for returning patient visit'
+              notes: 'Card activation for repeat patient visit'
             });
 
             const response = await api.get(`/patients/${patient.id}/for-visit`);
@@ -191,7 +191,7 @@ const PatientRegistration = () => {
       const visitResponse = await api.post('/billing/create-visit', {
         patientId: patient.id,
         type: 'REGULAR',
-        notes: 'Returning patient visit'
+        notes: 'Repeat patient visit'
       });
 
       setVisit(visitResponse.data.visit);
@@ -395,7 +395,7 @@ const PatientRegistration = () => {
             >
               <div className="text-center">
                 <Search className="h-12 w-12 text-primary-600 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">Returning Patient</h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">Repeat Patient</h3>
                 <p className="text-gray-600 mb-4">Search for an existing patient and create a new visit</p>
                 <div className="text-sm text-gray-500">
                   <p>• Patient already in system</p>
@@ -412,7 +412,7 @@ const PatientRegistration = () => {
                 onClick={() => setStep(2)}
                 className="btn btn-primary btn-lg"
               >
-                Continue with {registrationType === 'new' ? 'New Patient' : 'Returning Patient'}
+                Continue with {registrationType === 'new' ? 'New Patient' : 'Repeat Patient'}
               </button>
             </div>
           )}
@@ -534,7 +534,7 @@ const PatientRegistration = () => {
                   <label className="label">Card Type *</label>
                   <select className="input" {...register('cardType', { required: 'Card type is required' })}>
                     <option value="">Select Card Type</option>
-                    <option value="GENERAL">General Card</option>
+                    <option value="GENERAL">Medical Card</option>
                     <option value="DERMATOLOGY">Dermatology Card</option>
                   </select>
                   {errors.cardType && <p className="text-red-500 text-sm mt-1">{errors.cardType.message}</p>}

@@ -210,8 +210,8 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 w-full max-w-full overflow-x-hidden">
-      <div className="flex items-center justify-between mb-6">
+    <div className="bg-white rounded-lg shadow-md p-4 w-full max-w-full overflow-x-hidden">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold" style={{ color: '#0C0E0B' }}>
           {isEditing ? 'Edit Medical Certificate' : 'Create Medical Certificate'}
         </h2>
@@ -223,7 +223,7 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6 w-full max-w-full">
+      <form onSubmit={handleSubmit} className="space-y-4 w-full max-w-full">
         {/* Patient Selection & Visit Fetching */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2 relative">
@@ -321,7 +321,7 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
         </div>
 
         {/* Rest Period */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
               Rest Start Date (Optional)
@@ -353,76 +353,75 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
               <p className="text-sm text-red-500">{errors.restEndDate}</p>
             )}
           </div>
-        </div>
-
-        {/* Appointment Date */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
-            Appointment Date (Optional)
-          </label>
-          <input
-            type="date"
-            name="appointmentDate"
-            value={formData.appointmentDate}
-            onChange={handleInputChange}
-            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          <div className="space-y-2">
+            <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
+              Appointment Date (Optional)
+            </label>
+            <input
+              type="date"
+              name="appointmentDate"
+              value={formData.appointmentDate}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
         </div>
 
         {/* Medical Information */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <h3 className="text-lg font-medium" style={{ color: '#0C0E0B' }}>
             Medical Information
           </h3>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
+                Diagnosis *
+              </label>
+              <textarea
+                name="diagnosis"
+                value={formData.diagnosis}
+                onChange={handleInputChange}
+                rows={2}
+                placeholder="Enter diagnosis..."
+                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.diagnosis ? 'border-red-500' : ''}`}
+              />
+              {errors.diagnosis && (
+                <p className="text-sm text-red-500">{errors.diagnosis}</p>
+              )}
+            </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
-              Diagnosis *
-            </label>
-            <textarea
-              name="diagnosis"
-              value={formData.diagnosis}
-              onChange={handleInputChange}
-              rows={3}
-              placeholder="Enter diagnosis..."
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.diagnosis ? 'border-red-500' : ''}`}
-            />
-            {errors.diagnosis && (
-              <p className="text-sm text-red-500">{errors.diagnosis}</p>
-            )}
-          </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
+                Treatment
+              </label>
+              <textarea
+                name="treatment"
+                value={formData.treatment}
+                onChange={handleInputChange}
+                rows={2}
+                placeholder="Enter treatment details..."
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
-              Treatment
-            </label>
-            <textarea
-              name="treatment"
-              value={formData.treatment}
-              onChange={handleInputChange}
-              rows={3}
-              placeholder="Enter treatment details..."
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
-              Recommendations
-            </label>
-            <textarea
-              name="recommendations"
-              value={formData.recommendations}
-              onChange={handleInputChange}
-              rows={3}
-              placeholder="Enter recommendations..."
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="space-y-2">
+              <label className="block text-sm font-medium" style={{ color: '#0C0E0B' }}>
+                Recommendations
+              </label>
+              <textarea
+                name="recommendations"
+                value={formData.recommendations}
+                onChange={handleInputChange}
+                rows={2}
+                placeholder="Enter recommendations..."
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex justify-end space-x-3 pt-6 border-t">
+        <div className="flex justify-end space-x-3 pt-4 border-t">
           <button
             type="button"
             onClick={onCancel}

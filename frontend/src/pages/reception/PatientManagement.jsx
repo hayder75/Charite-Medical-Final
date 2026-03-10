@@ -443,7 +443,7 @@ const PatientManagement = () => {
                 disabled={activatingCard}
                 className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 ${activatingCard ? 'bg-gray-100 cursor-not-allowed' : ''}`}
               >
-                <option value="GENERAL">General Card</option>
+                <option value="GENERAL">Medical Card</option>
                 <option value="DERMATOLOGY">Dermatology Card</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">

@@ -167,11 +167,11 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
         const parsedText = parseFormatting(text);
 
         return `
-          <div style="margin-bottom: 15px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 4px; page-break-inside: avoid;">
-            <div style="font-weight: bold; font-size: 12px; margin-bottom: 5px; color: #1e40af;">
+          <div class="medication-item" style="page-break-inside: avoid;">
+            <div class="medication-name">
               #${idx + 1}. Compound Prescription ${prescription.referenceNumber ? `(${prescription.referenceNumber})` : ''}
             </div>
-            <div style="font-size: 11px; line-height: 1.6;">
+            <div class="medication-details">
               ${parsedText}
             </div>
           </div>
@@ -185,54 +185,70 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
             <title>Compound Prescriptions</title>
             <style>
               @media print {
-                @page { size: A5; margin: 10mm; }
-                html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
+                @page { size: A6; margin: 0 !important; }
+                html, body { margin: 0 !important; padding: 0 !important; background: white !important; visibility: visible !important; display: flex !important; flex-direction: column !important; align-items: center !important; overflow: visible !important; }
+                * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: black !important; }
                 .no-print { display: none !important; }
+                .prescription-container { width: 105mm !important; min-height: 148mm !important; margin: 0 auto !important; padding: 8mm !important; border: none !important; box-shadow: none !important; background: white !important; display: block !important; position: relative !important; overflow: hidden !important; box-sizing: border-box !important; visibility: visible !important; }
               }
-              body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; color: #333; line-height: 1.3; }
-              .no-print { padding: 10px; background: #fff; margin-bottom: 20px; text-align: center; }
+              body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; color: #333; line-height: 1.3; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+              .no-print { padding: 10px; background: #fff; margin-bottom: 20px; border-radius: 8px; width: 100%; max-width: 300px; text-align: center; }
               .no-print button { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; }
-              .header { text-align: center; padding-bottom: 10px; margin-bottom: 15px; border-bottom: 2px solid #2563eb; }
-              .clinic-name { font-size: 16px; font-weight: 700; color: #1e40af; text-transform: uppercase; }
-              .clinic-tagline { font-size: 10px; color: #64748b; font-style: italic; }
-              .patient-info { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 11px; margin-bottom: 15px; padding: 8px; background: #f8fafc; border-radius: 4px; }
-              .patient-info span { color: #64748b; font-weight: 600; }
-              .external-warning { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 6px; border-radius: 4px; font-size: 11px; font-weight: bold; text-align: center; margin-bottom: 15px; }
-              .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 10px; }
-              .signature-line { text-align: center; }
-              .signature-line .line { border-top: 1px solid #333; width: 120px; margin: 30px auto 3px; }
-              .signature-line .label { font-size: 9px; color: #666; }
+              .prescription-container { width: 105mm; min-height: 148mm; background: white; padding: 8mm; box-shadow: 0 10px 25px rgba(0,0,0,0.1); position: relative; box-sizing: border-box; display: block; margin: 0 auto; }
+              .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #2563eb; }
+              .header-left { display: flex; align-items: center; gap: 8px; }
+              .logo { width: 40px; height: 40px; object-fit: contain; }
+              .clinic-name { font-size: 13px; font-weight: 700; margin: 0; color: #1e40af; text-transform: uppercase; }
+              .clinic-tagline { font-size: 9px; color: #64748b; margin: 0; font-style: italic; }
+              .report-title { font-size: 14px; font-weight: 700; color: #0f172a; text-transform: uppercase; }
+              .report-info { font-size: 9px; color: #64748b; margin-top: 1px; text-align: right; }
+              .patient-info { margin-bottom: 12px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 11px; }
+              .patient-info span { font-weight: 700; color: #64748b; }
+              .external-warning { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 6px 10px; border-radius: 4px; font-size: 10px; font-weight: bold; text-align: center; margin-bottom: 10px; }
+              .medication-item { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; width: 100%; }
+              .medication-name { font-weight: 700; font-size: 12px; color: #0f172a; margin-bottom: 2px; }
+              .medication-details { font-size: 11px; color: #334155; font-weight: 500; line-height: 1.6; }
+              .footer { margin-top: auto; padding-top: 10px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; }
+              .doctor-name { font-weight: 700; color: #1e293b; font-size: 11px; }
+              .signature-box { width: 100px; border-top: 1px solid #334155; padding-top: 4px; text-align: center; font-size: 8px; color: #64748b; }
             </style>
           </head>
           <body>
-            <div class="no-print"><button onclick="window.print()">Print</button></div>
-            <div class="header">
-              <div class="clinic-name">Charite Medium Clinic</div>
-              <div class="clinic-tagline">Compound Prescriptions</div>
-              <div style="font-size: 10px; color: #64748b;">${currentDate} | ${currentTime}</div>
-            </div>
-            
-            <div class="patient-info">
-              <div><span>Patient:</span> ${patientName}</div>
-              <div><span>Card No:</span> #${patientCardNumber}</div>
-              <div><span>Age/Sex:</span> ${patientAge}Y / ${patientGender}</div>
-              <div><span>Prescriptions:</span> ${existingPrescriptions.length}</div>
-            </div>
-
-            <div class="external-warning">
-              ⚠ FOR EXTERNAL USE ONLY
-            </div>
-
-            ${prescriptionsHtml}
-
-            <div class="footer">
-              <div>
-                <div style="font-weight: 600;">${doctorName}</div>
-                <div style="font-size: 9px; color: #64748b;">${doctorQualification}</div>
+            <div class="no-print"><button onclick="window.print()">Print Prescription</button></div>
+            <div class="prescription-container">
+              <div class="header">
+                <div class="header-left">
+                  <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
+                  <div class="clinic-info">
+                    <h1 class="clinic-name">Charite Medium Clinic</h1>
+                    <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
+                  </div>
+                </div>
+                <div class="header-right">
+                  <h2 class="report-title">Prescription</h2>
+                  <div class="report-info">Date: ${currentDate}<br>Time: ${currentTime}</div>
+                </div>
               </div>
-              <div class="signature-line">
-                <div class="line"></div>
-                <div class="label">Doctor's Signature</div>
+
+              <div class="patient-info">
+                <div><span>Patient:</span> ${patientName}</div>
+                <div><span>Card No:</span> #${patientCardNumber}</div>
+                <div><span>Age/Sex:</span> ${patientAge}Y / ${patientGender}</div>
+                <div><span>Prescriptions:</span> ${existingPrescriptions.length}</div>
+              </div>
+
+              <div class="external-warning">
+                ⚠ FOR EXTERNAL USE ONLY
+              </div>
+
+              ${prescriptionsHtml}
+
+              <div class="footer">
+                <div>
+                  <div class="doctor-name">${doctorName}</div>
+                  <div style="font-size: 9px; color: #64748b;">${doctorQualification}</div>
+                </div>
+                <div class="signature-box">Doctor's Signature</div>
               </div>
             </div>
           </body>

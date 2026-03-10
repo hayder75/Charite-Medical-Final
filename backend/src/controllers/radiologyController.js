@@ -122,11 +122,13 @@ exports.getOrders = async (req, res) => {
     const walkInOrdersRaw = await prisma.radiologyOrder.findMany({
       where: {
         isWalkIn: true,
-        status: statusFilter
+        status: statusFilter,
+        billing: { status: 'PAID' }
       },
       include: {
         patient: { select: { id: true, name: true, mobile: true, type: true, email: true } },
         type: true,
+        billing: { select: { id: true, status: true } },
         radiologyResults: { include: { testType: true, attachments: true } }
       },
       orderBy: { createdAt: 'asc' }

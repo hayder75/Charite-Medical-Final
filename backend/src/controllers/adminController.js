@@ -10,11 +10,11 @@ const REPORT_SERVICE_BUCKETS = {
   PROCEDURE: 'Procedure',
   NURSE_SERVICES: 'Nurse Services',
   NURSE_WALKIN: 'Nurse Walk-in',
-  CARD_CREATED_GENERAL: 'General Card Created',
+  CARD_CREATED_GENERAL: 'Medical Card Created',
   CARD_CREATED_DERMATOLOGY: 'Dermatology Card Created',
-  CARD_REACTIVATION_GENERAL: 'General Card Reactivation',
+  CARD_REACTIVATION_GENERAL: 'Medical Card Reactivation',
   CARD_REACTIVATION_DERMATOLOGY: 'Dermatology Card Reactivation',
-  CONSULTATION_GENERAL: 'Consultation (General)',
+  CONSULTATION_GENERAL: 'Consultation (Medical)',
   CONSULTATION_DERMATOLOGY: 'Consultation (Dermatology)',
   MATERIAL_NEEDS: 'Material Needs',
   EMERGENCY_MEDICATION: 'Emergency Medication',
@@ -163,6 +163,175 @@ const allocateBillingAmountWithWalkInSplit = (billing, paidAmount, walkInFlags =
   }
 
   return totals;
+};
+
+const getCardServiceUsageCounts = async (startDate, endDate, doctorIds = []) => {
+  const usage = {
+    opened: { medical: 0, dermatology: 0, total: 0 },
+    activation: { medical: 0, dermatology: 0, total: 0 }
+  };
+
+  const scopedDoctorIds = Array.isArray(doctorIds) ? doctorIds.filter(Boolean) : [];
+  let assignmentIds = [];
+  if (scopedDoctorIds.length > 0) {
+    const assignments = await prisma.assignment.findMany({
+      where: { doctorId: { in: scopedDoctorIds } },
+      select: { id: true }
+    });
+    assignmentIds = assignments.map((a) => a.id);
+  }
+
+  const doctorVisitFilter = scopedDoctorIds.length > 0
+    ? {
+      billing: {
+        visit: {
+          OR: [
+            { suggestedDoctorId: { in: scopedDoctorIds } },
+            ...(assignmentIds.length > 0 ? [{ assignmentId: { in: assignmentIds } }] : [])
+          ]
+        }
+      }
+    }
+    : {};
+
+  // Count card usage by payment date (not billing line creation date) so daily reports
+  // reflect what was actually processed at billing on that day.
+  const paymentTransactions = await prisma.cashTransaction.findMany({
+    where: {
+      type: 'PAYMENT_RECEIVED',
+      billingId: { not: null },
+      ...doctorVisitFilter,
+      createdAt: {
+        gte: startDate,
+        lte: endDate
+      }
+    },
+    include: {
+      billing: {
+        select: {
+          id: true,
+          status: true,
+          services: {
+            select: {
+              quantity: true,
+              service: {
+                select: {
+                  code: true,
+                  name: true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const processedBillingIds = new Set();
+
+  for (const tx of paymentTransactions) {
+    const billing = tx.billing;
+    if (!billing?.id) continue;
+    if (billing.status !== 'PAID') continue;
+    if (processedBillingIds.has(billing.id)) continue;
+
+    processedBillingIds.add(billing.id);
+
+    for (const line of billing.services || []) {
+      const code = (line.service?.code || '').toUpperCase();
+      const name = (line.service?.name || '').toUpperCase();
+
+      const isCardOpened =
+        code.startsWith('CARD-REG') ||
+        name.includes('CARD REGISTRATION') ||
+        name.includes('CARD CREATED');
+      const isCardActivation =
+        code.startsWith('CARD-ACT') ||
+        name.includes('CARD ACTIVATION') ||
+        name.includes('CARD REACTIVATION') ||
+        name.includes('CARD RENEWAL');
+
+      if (!isCardOpened && !isCardActivation) {
+        continue;
+      }
+
+      const isDermatology = code.includes('DERM') || name.includes('DERM') || name.includes('SKIN');
+      const quantity = Number(line.quantity) > 0 ? Number(line.quantity) : 1;
+
+      if (isCardOpened) {
+        if (isDermatology) {
+          usage.opened.dermatology += quantity;
+        } else {
+          usage.opened.medical += quantity;
+        }
+      }
+
+      if (isCardActivation) {
+        if (isDermatology) {
+          usage.activation.dermatology += quantity;
+        } else {
+          usage.activation.medical += quantity;
+        }
+      }
+    }
+  }
+
+  usage.opened.total = usage.opened.medical + usage.opened.dermatology;
+  usage.activation.total = usage.activation.medical + usage.activation.dermatology;
+
+  return usage;
+};
+
+const getDermatologyMedicalTreatedCount = async (startDate, endDate, doctorIds = []) => {
+  const scopedDoctorIds = Array.isArray(doctorIds) ? doctorIds.filter(Boolean) : [];
+  const markerTag = '[DERM_MEDICAL_TREATED]';
+
+  const auditWhere = {
+    action: 'DERM_MEDICAL_TREATED_MARK',
+    ...(scopedDoctorIds.length > 0 ? { userId: { in: scopedDoctorIds } } : {}),
+    createdAt: {
+      gte: startDate,
+      lte: endDate
+    }
+  };
+
+  let assignmentIds = [];
+  if (scopedDoctorIds.length > 0) {
+    const assignments = await prisma.assignment.findMany({
+      where: { doctorId: { in: scopedDoctorIds } },
+      select: { id: true }
+    });
+    assignmentIds = assignments.map((a) => a.id);
+  }
+
+  const visitWhere = {
+    completedAt: {
+      gte: startDate,
+      lte: endDate
+    },
+    notes: { contains: markerTag },
+    ...(scopedDoctorIds.length > 0
+      ? {
+        OR: [
+          { suggestedDoctorId: { in: scopedDoctorIds } },
+          ...(assignmentIds.length > 0 ? [{ assignmentId: { in: assignmentIds } }] : [])
+        ]
+      }
+      : {})
+  };
+
+  const [auditMarkers, taggedVisits] = await Promise.all([
+    prisma.auditLog.findMany({ where: auditWhere, select: { entityId: true } }),
+    prisma.visit.findMany({ where: visitWhere, select: { id: true } })
+  ]);
+
+  const uniqueVisitIds = new Set();
+  auditMarkers.forEach((m) => {
+    if (typeof m.entityId === 'number') uniqueVisitIds.add(m.entityId);
+  });
+  taggedVisits.forEach((v) => uniqueVisitIds.add(v.id));
+
+  return uniqueVisitIds.size;
 };
 
 // Validation schemas
@@ -2671,8 +2840,20 @@ exports.getDailyBreakdown = async (req, res) => {
 exports.getDoctorPerformanceStats = async (req, res) => {
   try {
     const { period = 'daily', doctorId } = req.query;
-    const DOCTOR_REPORT_QUALIFICATIONS = ['DERMATOLOGY', 'HEALTH OFFICER', 'HEALTH_OFFICER'];
+    const DOCTOR_REPORT_QUALIFICATIONS = [
+      'DERMATOLOGY',
+      'DERMATOLOGIST',
+      'Dermatology',
+      'Dermatologist',
+      'HEALTH OFFICER',
+      'HEALTH_OFFICER',
+      'Health Officer',
+      'Health_Officer'
+    ];
     const PROCEDURE_CATEGORIES = ['PROCEDURE', 'DENTAL', 'TREATMENT'];
+    const LAB_CATEGORIES = ['LAB'];
+    const EMERGENCY_MEDICATION_CATEGORIES = ['EMERGENCY_DRUG'];
+    const DOCTOR_REPORT_CATEGORIES = [...PROCEDURE_CATEGORIES, ...LAB_CATEGORIES, ...EMERGENCY_MEDICATION_CATEGORIES];
 
     // Calculate date range based on period
     const now = new Date();
@@ -2708,6 +2889,8 @@ exports.getDoctorPerformanceStats = async (req, res) => {
       select: {
         id: true,
         fullname: true,
+        role: true,
+        qualifications: true,
         consultationFee: true
       }
     });
@@ -2728,6 +2911,51 @@ exports.getDoctorPerformanceStats = async (req, res) => {
       console.log(`   - Assignment IDs: ${assignmentIds.length}`);
       console.log(`   - Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
+      // Get assignments created in the date range for this doctor
+      const doctorAssignments = await prisma.assignment.findMany({
+        where: {
+          doctorId: doctor.id,
+          createdAt: {
+            gte: startDate,
+            lte: endDate
+          }
+        },
+        select: {
+          id: true,
+          patientId: true
+        }
+      });
+      
+      const doctorAssignmentIds = doctorAssignments.map(a => a.id);
+      const assignedPatientIdsFromAssignments = new Set(doctorAssignments.map(a => a.patientId).filter(Boolean));
+
+      // Patients treated should reflect assigned patients in the selected period,
+      // Also include visits where suggestedDoctorId matches and created in date range
+      const assignedVisits = await prisma.visit.findMany({
+        where: {
+          createdAt: {
+            gte: startDate,
+            lte: endDate
+          },
+          OR: [
+            { suggestedDoctorId: doctor.id },
+            ...(doctorAssignmentIds.length > 0 ? [{ assignmentId: { in: doctorAssignmentIds } }] : [])
+          ]
+        },
+        select: {
+          id: true,
+          patientId: true
+        }
+      });
+
+      // Combine patient IDs from both assignments and visits
+      const allAssignedPatientIds = new Set([
+        ...assignedPatientIdsFromAssignments,
+        ...(assignedVisits || []).map(v => v.patientId).filter(Boolean)
+      ]);
+      
+      const totalPatients = allAssignedPatientIds.size;
+
       // Procedure revenue is based on procedure lines created in the selected period.
       const procedureLines = await prisma.billingService.findMany({
         where: {
@@ -2736,7 +2964,7 @@ exports.getDoctorPerformanceStats = async (req, res) => {
             lte: endDate
           },
           service: {
-            category: { in: PROCEDURE_CATEGORIES }
+            category: { in: DOCTOR_REPORT_CATEGORIES }
           },
           billing: {
             visit: assignmentIds.length > 0
@@ -2782,26 +3010,53 @@ exports.getDoctorPerformanceStats = async (req, res) => {
         }
       });
 
-      console.log(`   - Procedure lines found: ${procedureLines.length}`);
+      console.log(`   - Doctor report lines found: ${procedureLines.length}`);
 
       // Calculate statistics
-      const uniqueVisitIds = new Set();
-      const uniquePatientIds = new Set();
+      const sectionStats = {
+        procedures: { revenue: 0, orders: 0, patientIds: new Set() },
+        labs: { revenue: 0, orders: 0, patientIds: new Set() },
+        emergencyMedications: { revenue: 0, orders: 0, patientIds: new Set() }
+      };
 
       procedureLines.forEach((line) => {
         const visit = line.billing?.visit;
         if (!visit) return;
-        uniqueVisitIds.add(visit.id);
+
+        const category = line.service?.category;
+        let targetSection = null;
+        if (PROCEDURE_CATEGORIES.includes(category)) {
+          targetSection = sectionStats.procedures;
+        } else if (LAB_CATEGORIES.includes(category)) {
+          targetSection = sectionStats.labs;
+        } else if (EMERGENCY_MEDICATION_CATEGORIES.includes(category)) {
+          targetSection = sectionStats.emergencyMedications;
+        }
+
+        if (!targetSection) return;
+
+        targetSection.revenue += line.totalPrice || 0;
+        targetSection.orders += 1;
         if (visit.patientId) {
-          uniquePatientIds.add(visit.patientId);
+          targetSection.patientIds.add(visit.patientId);
         }
       });
 
-      const totalPatients = uniquePatientIds.size;
-      const procedureRevenue = procedureLines.reduce((sum, line) => sum + (line.totalPrice || 0), 0);
-      const avgPerPatient = totalPatients > 0 ? procedureRevenue / totalPatients : 0;
+      const allPatientIds = new Set([
+        ...sectionStats.procedures.patientIds,
+        ...sectionStats.labs.patientIds,
+        ...sectionStats.emergencyMedications.patientIds
+      ]);
+
+      const procedureRevenue = sectionStats.procedures.revenue;
+      const labRevenue = sectionStats.labs.revenue;
+      const emergencyMedicationRevenue = sectionStats.emergencyMedications.revenue;
+      const totalRevenue = procedureRevenue + labRevenue + emergencyMedicationRevenue;
+      const avgPerPatient = totalPatients > 0 ? totalRevenue / totalPatients : 0;
 
       console.log(`   - Procedure Revenue: ${procedureRevenue}`);
+      console.log(`   - Lab Revenue: ${labRevenue}`);
+      console.log(`   - Emergency Medication Revenue: ${emergencyMedicationRevenue}`);
       console.log(`   - Total Patients: ${totalPatients}`);
 
       const visitMap = new Map();
@@ -2819,25 +3074,47 @@ exports.getDoctorPerformanceStats = async (req, res) => {
       return {
         doctorId: doctor.id,
         doctorName: doctor.fullname,
+        role: doctor.role,
+        qualifications: doctor.qualifications || [],
         consultationFee: doctor.consultationFee,
         totalPatients,
-        totalRevenue: procedureRevenue,
+        totalRevenue,
         procedureRevenue,
-        procedureOrders: procedureLines.length,
-        procedurePatients: uniquePatientIds.size,
+        procedureOrders: sectionStats.procedures.orders,
+        procedurePatients: sectionStats.procedures.patientIds.size,
+        labRevenue,
+        labOrders: sectionStats.labs.orders,
+        labPatients: sectionStats.labs.patientIds.size,
+        emergencyMedicationRevenue,
+        emergencyMedicationOrders: sectionStats.emergencyMedications.orders,
+        emergencyMedicationPatients: sectionStats.emergencyMedications.patientIds.size,
         avgPerPatient,
         visits: Array.from(visitMap.values())
       };
     }));
+
+    const doctorIdsForFilter = doctors.map((d) => d.id);
+
+    const [cardUsage, medicalTreatedByDermatology] = await Promise.all([
+      getCardServiceUsageCounts(startDate, endDate, doctorIdsForFilter),
+      getDermatologyMedicalTreatedCount(startDate, endDate, doctorIdsForFilter)
+    ]);
 
     // Calculate summary statistics
     const summary = {
       totalConsultationFees: results.reduce((sum, r) => sum + r.procedureRevenue, 0),
       totalProcedureRevenue: results.reduce((sum, r) => sum + r.procedureRevenue, 0),
       totalProcedureOrders: results.reduce((sum, r) => sum + r.procedureOrders, 0),
-      avgPerDoctor: results.length > 0 ? results.reduce((sum, r) => sum + r.procedureRevenue, 0) / results.length : 0,
+      totalLabRevenue: results.reduce((sum, r) => sum + (r.labRevenue || 0), 0),
+      totalLabOrders: results.reduce((sum, r) => sum + (r.labOrders || 0), 0),
+      totalEmergencyMedicationRevenue: results.reduce((sum, r) => sum + (r.emergencyMedicationRevenue || 0), 0),
+      totalEmergencyMedicationOrders: results.reduce((sum, r) => sum + (r.emergencyMedicationOrders || 0), 0),
+      totalRevenue: results.reduce((sum, r) => sum + (r.totalRevenue || 0), 0),
+      avgPerDoctor: results.length > 0 ? results.reduce((sum, r) => sum + (r.totalRevenue || 0), 0) / results.length : 0,
       totalConsultations: results.reduce((sum, r) => sum + r.totalPatients, 0),
-      topPerformer: results.reduce((top, current) => current.procedureRevenue > top.procedureRevenue ? current : top, results[0] || null)
+      topPerformer: results.reduce((top, current) => (current.totalRevenue || 0) > (top?.totalRevenue || 0) ? current : top, results[0] || null),
+      cardUsage,
+      medicalTreatedByDermatology
     };
 
     res.json({
@@ -2857,6 +3134,9 @@ exports.getDoctorDailyBreakdown = async (req, res) => {
   try {
     const { doctorId, year, month } = req.query;
     const PROCEDURE_CATEGORIES = ['PROCEDURE', 'DENTAL', 'TREATMENT'];
+    const LAB_CATEGORIES = ['LAB'];
+    const EMERGENCY_MEDICATION_CATEGORIES = ['EMERGENCY_DRUG'];
+    const DOCTOR_REPORT_CATEGORIES = [...PROCEDURE_CATEGORIES, ...LAB_CATEGORIES, ...EMERGENCY_MEDICATION_CATEGORIES];
 
     if (!doctorId) {
       return res.status(400).json({ error: 'Doctor ID is required' });
@@ -2878,6 +3158,27 @@ exports.getDoctorDailyBreakdown = async (req, res) => {
     });
     const assignmentIds = assignments.map(a => a.id);
 
+    const monthStart = new Date(y, m, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(y, m + 1, 0, 23, 59, 59, 999);
+    const medicalTreatedLogs = await prisma.auditLog.findMany({
+      where: {
+        action: 'DERM_MEDICAL_TREATED_MARK',
+        userId: doctorId,
+        createdAt: {
+          gte: monthStart,
+          lte: monthEnd
+        }
+      },
+      select: { createdAt: true }
+    });
+
+    const medicalTreatedByDay = new Map();
+    medicalTreatedLogs.forEach((log) => {
+      const d = new Date(log.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      medicalTreatedByDay.set(key, (medicalTreatedByDay.get(key) || 0) + 1);
+    });
+
     console.log(`🔍 Daily Breakdown - Doctor ID: ${doctorId}`);
     console.log(`   - Assignment IDs: ${assignmentIds.length}`);
     console.log(`   - Month: ${m + 1}, Year: ${y}`);
@@ -2888,6 +3189,50 @@ exports.getDoctorDailyBreakdown = async (req, res) => {
       const dayEnd = new Date(y, m, day);
       dayEnd.setHours(23, 59, 59, 999);
 
+      // Get assignments created on this day for this doctor
+      const dayAssignments = await prisma.assignment.findMany({
+        where: {
+          doctorId: doctorId,
+          createdAt: {
+            gte: dayStart,
+            lte: dayEnd
+          }
+        },
+        select: {
+          id: true,
+          patientId: true
+        }
+      });
+      
+      const dayAssignmentIds = dayAssignments.map(a => a.id);
+      const assignedPatientIdsFromDayAssignments = new Set(dayAssignments.map(a => a.patientId).filter(Boolean));
+
+      // Get visits created on this day with doctor assignment
+      const dayVisits = await prisma.visit.findMany({
+        where: {
+          createdAt: {
+            gte: dayStart,
+            lte: dayEnd
+          },
+          OR: [
+            { suggestedDoctorId: doctorId },
+            ...(dayAssignmentIds.length > 0 ? [{ assignmentId: { in: dayAssignmentIds } }] : [])
+          ]
+        },
+        select: {
+          id: true,
+          patientId: true
+        }
+      });
+      
+      // Combine patient IDs from both assignments and visits for this day
+      const dayAssignedPatientIds = new Set([
+        ...assignedPatientIdsFromDayAssignments,
+        ...dayVisits.map(v => v.patientId).filter(Boolean)
+      ]);
+      
+      const assignedPatientsCount = dayAssignedPatientIds.size;
+
       // Use procedure lines created on this day, then attribute them to the doctor via visit linkage.
       const procedureLines = await prisma.billingService.findMany({
         where: {
@@ -2896,7 +3241,7 @@ exports.getDoctorDailyBreakdown = async (req, res) => {
             lte: dayEnd
           },
           service: {
-            category: { in: PROCEDURE_CATEGORIES }
+            category: { in: DOCTOR_REPORT_CATEGORIES }
           },
           billing: {
             visit: assignmentIds.length > 0
@@ -2934,7 +3279,11 @@ exports.getDoctorDailyBreakdown = async (req, res) => {
         }
       });
 
-      const procedureRevenue = procedureLines.reduce((sum, line) => sum + (line.totalPrice || 0), 0);
+      const sectionStats = {
+        procedures: { revenue: 0, orders: 0, patientIds: new Set() },
+        labs: { revenue: 0, orders: 0, patientIds: new Set() },
+        emergencyMedications: { revenue: 0, orders: 0, patientIds: new Set() }
+      };
       const detailsByVisit = new Map();
 
       for (const line of procedureLines) {
@@ -2954,23 +3303,62 @@ exports.getDoctorDailyBreakdown = async (req, res) => {
           });
         }
 
+        const category = line.service?.category;
+        let targetSection = null;
+        if (PROCEDURE_CATEGORIES.includes(category)) {
+          targetSection = sectionStats.procedures;
+        } else if (LAB_CATEGORIES.includes(category)) {
+          targetSection = sectionStats.labs;
+        } else if (EMERGENCY_MEDICATION_CATEGORIES.includes(category)) {
+          targetSection = sectionStats.emergencyMedications;
+        }
+
+        if (targetSection) {
+          targetSection.revenue += line.totalPrice || 0;
+          targetSection.orders += 1;
+          if (visitData.patientId) {
+            targetSection.patientIds.add(visitData.patientId);
+          }
+        }
+
         const current = detailsByVisit.get(visitId);
         current.amount += line.totalPrice || 0;
         current.ordersCount += 1;
       }
 
       const details = Array.from(detailsByVisit.values()).sort((a, b) => b.amount - a.amount);
-      const treatedPatientCount = new Set(details.map((entry) => entry.patientId)).size;
-      const procedurePatientCount = treatedPatientCount;
+      const treatedPatientCount = new Set([
+        ...sectionStats.procedures.patientIds,
+        ...sectionStats.labs.patientIds,
+        ...sectionStats.emergencyMedications.patientIds
+      ]).size;
+      const procedurePatientCount = sectionStats.procedures.patientIds.size;
+      const labPatientCount = sectionStats.labs.patientIds.size;
+      const emergencyMedicationPatientCount = sectionStats.emergencyMedications.patientIds.size;
+      const procedureRevenue = sectionStats.procedures.revenue;
+      const labRevenue = sectionStats.labs.revenue;
+      const emergencyMedicationRevenue = sectionStats.emergencyMedications.revenue;
+      const totalRevenue = procedureRevenue + labRevenue + emergencyMedicationRevenue;
+      const totalOrders = sectionStats.procedures.orders + sectionStats.labs.orders + sectionStats.emergencyMedications.orders;
 
       dailyData.push({
         date: `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
         day,
-        revenue: procedureRevenue,
+        revenue: totalRevenue,
+        totalRevenue,
         procedureRevenue,
-        patients: treatedPatientCount,
+        labRevenue,
+        emergencyMedicationRevenue,
+        patients: assignedPatientsCount,
+        treatedPatients: treatedPatientCount,
         procedurePatients: procedurePatientCount,
-        procedureOrders: procedureLines.length,
+        labPatients: labPatientCount,
+        emergencyMedicationPatients: emergencyMedicationPatientCount,
+        procedureOrders: sectionStats.procedures.orders,
+        labOrders: sectionStats.labs.orders,
+        emergencyMedicationOrders: sectionStats.emergencyMedications.orders,
+        totalOrders,
+        medicalTreatedByDermatology: medicalTreatedByDay.get(`${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`) || 0,
         details
       });
     }
@@ -2987,6 +3375,9 @@ exports.getDoctorDayProcedureDetails = async (req, res) => {
   try {
     const { doctorId, date } = req.query;
     const PROCEDURE_CATEGORIES = ['PROCEDURE', 'DENTAL', 'TREATMENT'];
+    const LAB_CATEGORIES = ['LAB'];
+    const EMERGENCY_MEDICATION_CATEGORIES = ['EMERGENCY_DRUG'];
+    const DOCTOR_REPORT_CATEGORIES = [...PROCEDURE_CATEGORIES, ...LAB_CATEGORIES, ...EMERGENCY_MEDICATION_CATEGORIES];
 
     if (!doctorId) {
       return res.status(400).json({ error: 'Doctor ID is required' });
@@ -3019,7 +3410,7 @@ exports.getDoctorDayProcedureDetails = async (req, res) => {
           lte: dayEnd
         },
         service: {
-          category: { in: PROCEDURE_CATEGORIES }
+          category: { in: DOCTOR_REPORT_CATEGORIES }
         },
         billing: {
           visit: assignmentIds.length > 0
@@ -3067,74 +3458,149 @@ exports.getDoctorDayProcedureDetails = async (req, res) => {
       }
     });
 
-    const detailsByVisit = new Map();
-    const proceduresByName = new Map();
+    const SECTION_CONFIG = {
+      procedures: {
+        categories: PROCEDURE_CATEGORIES,
+        defaultServiceName: 'Procedure'
+      },
+      labs: {
+        categories: LAB_CATEGORIES,
+        defaultServiceName: 'Lab Test'
+      },
+      emergencyMedications: {
+        categories: EMERGENCY_MEDICATION_CATEGORIES,
+        defaultServiceName: 'Emergency Medication'
+      }
+    };
+
+    const sectionAccumulator = {
+      procedures: { detailsByVisit: new Map(), topItemsByName: new Map(), revenue: 0, orders: 0, patientIds: new Set() },
+      labs: { detailsByVisit: new Map(), topItemsByName: new Map(), revenue: 0, orders: 0, patientIds: new Set() },
+      emergencyMedications: { detailsByVisit: new Map(), topItemsByName: new Map(), revenue: 0, orders: 0, patientIds: new Set() }
+    };
+
+    const detectSection = (category) => {
+      if (SECTION_CONFIG.procedures.categories.includes(category)) return 'procedures';
+      if (SECTION_CONFIG.labs.categories.includes(category)) return 'labs';
+      if (SECTION_CONFIG.emergencyMedications.categories.includes(category)) return 'emergencyMedications';
+      return null;
+    };
 
     for (const line of procedureLines) {
       const visit = line.billing?.visit;
       if (!visit) continue;
 
-      if (!detailsByVisit.has(visit.id)) {
-        detailsByVisit.set(visit.id, {
+      const sectionKey = detectSection(line.service?.category);
+      if (!sectionKey) continue;
+
+      const section = sectionAccumulator[sectionKey];
+      const defaultServiceName = SECTION_CONFIG[sectionKey].defaultServiceName;
+
+      if (!section.detailsByVisit.has(visit.id)) {
+        section.detailsByVisit.set(visit.id, {
           visitId: visit.id,
           patientId: visit.patientId,
           patientName: visit.patient?.name || 'Unknown',
           billingIds: new Set(),
           paymentStatus: line.billing?.status || 'PENDING',
           amount: 0,
-          procedures: []
+          ordersCount: 0,
+          items: []
         });
       }
 
-      const current = detailsByVisit.get(visit.id);
+      const current = section.detailsByVisit.get(visit.id);
       current.amount += line.totalPrice || 0;
+      current.ordersCount += 1;
       if (line.billing?.id) {
         current.billingIds.add(line.billing.id);
       }
-      current.procedures.push({
+      current.items.push({
         serviceId: line.service?.id || null,
         serviceCode: line.service?.code || '',
-        serviceName: line.service?.name || 'Procedure',
+        serviceName: line.service?.name || defaultServiceName,
         quantity: line.quantity || 1,
         amount: line.totalPrice || 0
       });
 
-      const procKey = line.service?.name || 'Procedure';
-      if (!proceduresByName.has(procKey)) {
-        proceduresByName.set(procKey, {
-          serviceName: procKey,
+      const itemKey = line.service?.name || defaultServiceName;
+      if (!section.topItemsByName.has(itemKey)) {
+        section.topItemsByName.set(itemKey, {
+          serviceName: itemKey,
           count: 0,
           revenue: 0
         });
       }
-      const procSummary = proceduresByName.get(procKey);
-      procSummary.count += line.quantity || 1;
-      procSummary.revenue += line.totalPrice || 0;
+
+      const itemSummary = section.topItemsByName.get(itemKey);
+      itemSummary.count += line.quantity || 1;
+      itemSummary.revenue += line.totalPrice || 0;
+
+      section.revenue += line.totalPrice || 0;
+      section.orders += 1;
+      if (visit.patientId) {
+        section.patientIds.add(visit.patientId);
+      }
     }
 
-    const details = Array.from(detailsByVisit.values())
-      .map((item) => ({
-        ...item,
-        billingIds: Array.from(item.billingIds)
-      }))
-      .sort((a, b) => b.amount - a.amount);
+    const buildSectionResponse = (sectionKey) => {
+      const section = sectionAccumulator[sectionKey];
+      const details = Array.from(section.detailsByVisit.values())
+        .map((item) => ({
+          ...item,
+          billingIds: Array.from(item.billingIds)
+        }))
+        .sort((a, b) => b.amount - a.amount);
 
-    const topProcedures = Array.from(proceduresByName.values())
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 20);
+      const topItems = Array.from(section.topItemsByName.values())
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 20);
+
+      return {
+        revenue: section.revenue,
+        orders: section.orders,
+        patients: section.patientIds.size,
+        visits: details.length,
+        details,
+        topItems
+      };
+    };
+
+    const procedureSection = buildSectionResponse('procedures');
+    const labSection = buildSectionResponse('labs');
+    const emergencyMedicationSection = buildSectionResponse('emergencyMedications');
+    const allDetails = [...procedureSection.details, ...labSection.details, ...emergencyMedicationSection.details]
+      .sort((a, b) => b.amount - a.amount);
+    const allPatients = new Set([
+      ...sectionAccumulator.procedures.patientIds,
+      ...sectionAccumulator.labs.patientIds,
+      ...sectionAccumulator.emergencyMedications.patientIds
+    ]);
 
     const summary = {
-      procedureRevenue: procedureLines.reduce((sum, line) => sum + (line.totalPrice || 0), 0),
-      procedureOrders: procedureLines.length,
-      patients: new Set(details.map((item) => item.patientId)).size,
-      visits: details.length
+      procedureRevenue: procedureSection.revenue,
+      procedureOrders: procedureSection.orders,
+      labRevenue: labSection.revenue,
+      labOrders: labSection.orders,
+      emergencyMedicationRevenue: emergencyMedicationSection.revenue,
+      emergencyMedicationOrders: emergencyMedicationSection.orders,
+      totalRevenue: procedureSection.revenue + labSection.revenue + emergencyMedicationSection.revenue,
+      totalOrders: procedureSection.orders + labSection.orders + emergencyMedicationSection.orders,
+      medicalTreatedByDermatology: await getDermatologyMedicalTreatedCount(dayStart, dayEnd, [doctorId]),
+      patients: allPatients.size,
+      visits: allDetails.length
     };
 
     res.json({
       date,
       summary,
-      topProcedures,
-      details
+      sections: {
+        procedures: procedureSection,
+        labs: labSection,
+        emergencyMedications: emergencyMedicationSection
+      },
+      topProcedures: procedureSection.topItems,
+      details: procedureSection.details
     });
   } catch (error) {
     console.error('Error getting doctor day procedure details:', error);

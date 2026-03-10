@@ -61,7 +61,7 @@ const CARD_SERVICE_DEFINITIONS = {
     DERMATOLOGY: {
       code: 'CARD-REG-DERM',
       name: 'Dermatology Patient Card Registration',
-      price: 200,
+      price: 400,
       description: 'Initial dermatology patient card registration fee (first time only)'
     }
   },
@@ -75,7 +75,7 @@ const CARD_SERVICE_DEFINITIONS = {
     DERMATOLOGY: {
       code: 'CARD-ACT-DERM',
       name: 'Dermatology Patient Card Activation',
-      price: 200,
+      price: 300,
       description: 'Dermatology patient card activation/renewal fee (valid for 30 days)'
     }
   }
@@ -90,16 +90,25 @@ const getOrCreateCardService = async (purpose, cardType) => {
   const tier = getCardTier(cardType);
   const config = CARD_SERVICE_DEFINITIONS[purpose][tier];
 
-  const service = await prisma.service.upsert({
-    where: { code: config.code },
-    update: {
-      name: config.name,
-      price: config.price,
-      description: config.description,
-      isActive: true,
-      category: 'CONSULTATION'
-    },
-    create: {
+  const existingService = await prisma.service.findUnique({
+    where: { code: config.code }
+  });
+
+  if (existingService) {
+    if (!existingService.isActive || existingService.category !== 'CONSULTATION') {
+      return prisma.service.update({
+        where: { id: existingService.id },
+        data: {
+          isActive: true,
+          category: 'CONSULTATION'
+        }
+      });
+    }
+    return existingService;
+  }
+
+  return prisma.service.create({
+    data: {
       code: config.code,
       name: config.name,
       category: 'CONSULTATION',
@@ -108,8 +117,6 @@ const getOrCreateCardService = async (purpose, cardType) => {
       isActive: true
     }
   });
-
-  return service;
 };
 
 // Get all patients with card status

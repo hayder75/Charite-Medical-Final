@@ -3,6 +3,30 @@ import { Scan, Clock, CheckCircle, AlertTriangle, FileText, Upload, Image, User,
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 
+const getDateToken = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '00000000';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+};
+
+const toSmallSequence = (raw) => {
+  const input = String(raw ?? '');
+  if (!input) return '000';
+  if (/^\d+$/.test(input)) {
+    return String(parseInt(input, 10) % 1000 || parseInt(input, 10)).padStart(3, '0').slice(-3);
+  }
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash + input.charCodeAt(i) * (i + 1)) % 1000;
+  }
+  return String(hash || 1).padStart(3, '0');
+};
+
+const formatDisplayOrderId = (order) => `${getDateToken(order?.createdAt)}-${toSmallSequence(order?.id)}`;
+
 const RadiologyOrders = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -400,6 +424,7 @@ const RadiologyOrders = () => {
 
       const patientAge = patient.dob ? calculateAge(patient.dob) : (patient.age || 'N/A');
       const patientBloodType = patient.bloodType || 'N/A';
+      const displayOrderId = formatDisplayOrderId(order);
 
       const receiptContent = `
     <!DOCTYPE html>
@@ -668,7 +693,7 @@ const RadiologyOrders = () => {
             </div>
             <div class="info-item">
               <span class="info-label">Order ID</span>
-              <span class="info-value">#${order.id || 'N/A'}</span>
+              <span class="info-value">${displayOrderId}</span>
             </div>
             <div class="info-item">
               <span class="info-label">Ref. Doctor</span>
@@ -840,7 +865,7 @@ const RadiologyOrders = () => {
                   <div>
                     <div className="flex items-center space-x-2">
                       <h3 className="text-lg font-semibold text-gray-900">
-                        Order #{order.id} – {order.patient.name}
+                        Order {formatDisplayOrderId(order)} - {order.patient.name}
                       </h3>
                       {isDentalOrder(order) && (
                         <span className="px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
@@ -919,7 +944,7 @@ const RadiologyOrders = () => {
           <div className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[95vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-gray-900">
-                Radiology Results - Order #{selectedOrder.id}
+                Radiology Results - Order {formatDisplayOrderId(selectedOrder)}
               </h2>
               <button
                 onClick={() => {
@@ -996,7 +1021,7 @@ const RadiologyOrders = () => {
                       <div className="text-center py-8 text-gray-500 border rounded-lg p-4">
                         <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-yellow-500" />
                         <p className="font-medium">No radiology tests found in this order.</p>
-                        <p className="text-sm mt-2">Order ID: {selectedOrder.id}</p>
+                        <p className="text-sm mt-2">Order ID: {formatDisplayOrderId(selectedOrder)}</p>
                         <p className="text-sm">Is Walk-In: {selectedOrder.isWalkIn ? 'Yes' : 'No'}</p>
                         <p className="text-sm">Has Services Array: {selectedOrder.services ? 'Yes' : 'No'}</p>
                         <p className="text-sm">Services Count: {selectedOrder.services?.length || 0}</p>

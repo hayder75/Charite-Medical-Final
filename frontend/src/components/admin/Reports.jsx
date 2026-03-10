@@ -10,6 +10,7 @@ const Reports = () => {
   const [revenueStats, setRevenueStats] = useState(null);
   const [dailyBreakdown, setDailyBreakdown] = useState([]);
   const [doctorStats, setDoctorStats] = useState(null);
+  const [doctorOptions, setDoctorOptions] = useState([]);
   const [doctorDailyBreakdown, setDoctorDailyBreakdown] = useState([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
   const [selectedDoctorDay, setSelectedDoctorDay] = useState(null);
@@ -25,12 +26,43 @@ const Reports = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('daily');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`);
   const [revenueType, setRevenueType] = useState('billing'); // medical, pharmacy, doctors, billing
   const [showDayPopup, setShowDayPopup] = useState(false);
   const [popupDayData, setPopupDayData] = useState(null);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+  const BUCKET_LABEL_OVERRIDES = {
+    CARD_CREATED_GENERAL: 'Medical Card Created',
+    CARD_REACTIVATION_GENERAL: 'Medical Card Reactivation',
+    CONSULTATION_GENERAL: 'Consultation (Medical)'
+  };
+
+  const getDoctorPriority = (doctor) => {
+    const qualifications = Array.isArray(doctor?.qualifications)
+      ? doctor.qualifications.map((q) => String(q || '').toUpperCase())
+      : [];
+    const role = String(doctor?.role || '').toUpperCase();
+
+    const hasDerm = role.includes('DERM') || qualifications.some((q) => q.includes('DERM'));
+    const hasGeneral = role === 'DOCTOR' || qualifications.some((q) => q.includes('GENERAL') || q.includes('GP') || q.includes('MEDICAL'));
+    const hasHealthOfficer = qualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (hasDerm && !hasGeneral && !hasHealthOfficer) return 1;
+    if (hasGeneral && !hasDerm && !hasHealthOfficer) return 2;
+    if (hasDerm && hasGeneral && !hasHealthOfficer) return 3;
+    if (hasHealthOfficer) return 4;
+    return 5;
+  };
+
+  const sortDoctorsByPriority = (doctors) => {
+    return [...(doctors || [])].sort((a, b) => {
+      const priorityA = getDoctorPriority(a);
+      const priorityB = getDoctorPriority(b);
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      return String(a.doctorName || '').localeCompare(String(b.doctorName || ''));
+    });
+  };
 
   useEffect(() => {
     if (revenueType === 'doctors') {
@@ -49,6 +81,7 @@ const Reports = () => {
 
   useEffect(() => {
     if (revenueType === 'doctors' && selectedDoctorId) {
+      fetchSelectedDoctorStats(selectedDoctorId);
       fetchDoctorDailyBreakdown(selectedDoctorId);
     }
   }, [revenueType, selectedDoctorId, selectedMonth, selectedYear]);
@@ -81,24 +114,41 @@ const Reports = () => {
     }
   };
 
+  const fetchSelectedDoctorStats = async (doctorId) => {
+    if (!doctorId) return;
+
+    try {
+      const response = await api.get(`/admin/reports/doctor-performance?period=${selectedPeriod}&doctorId=${doctorId}`);
+      setDoctorStats(response.data || null);
+    } catch (error) {
+      console.error('Error fetching selected doctor performance:', error);
+      toast.error('Failed to fetch selected doctor data');
+    }
+  };
+
   const fetchDoctorStats = async () => {
     try {
       setLoading(true);
       const response = await api.get(`/admin/reports/doctor-performance?period=${selectedPeriod}`);
       const data = response.data || {};
-      setDoctorStats(data);
 
-      const doctors = data.doctors || [];
+      const doctors = sortDoctorsByPriority(data.doctors || []);
+      setDoctorOptions(doctors);
+
       if (doctors.length === 0) {
         setSelectedDoctorId('');
+        setDoctorStats(null);
+        setDoctorOptions([]);
         setDoctorDailyBreakdown([]);
         setSelectedDoctorDay(null);
         setSelectedDoctorDayDetails(null);
         return;
       }
 
-      const defaultDoctorId = selectedDoctorId || doctors[0].doctorId;
+      const selectedStillExists = doctors.some((d) => d.doctorId === selectedDoctorId);
+      const defaultDoctorId = selectedStillExists ? selectedDoctorId : doctors[0].doctorId;
       setSelectedDoctorId(defaultDoctorId);
+      await fetchSelectedDoctorStats(defaultDoctorId);
       await fetchDoctorDailyBreakdown(defaultDoctorId);
     } catch (error) {
       console.error('Error fetching doctor performance:', error);
@@ -201,6 +251,8 @@ const Reports = () => {
   };
 
   const handleDayClick = (day) => {
+    setSelectedDate(day.date);
+
     if (revenueType === 'doctors') {
       const dayData = doctorDailyBreakdown.find((d) => d.date === day.date);
       setSelectedDoctorDay(dayData || null);
@@ -265,9 +317,9 @@ const Reports = () => {
 
       if (revenueType === 'doctors') {
         const dayData = doctorDailyBreakdown.find((d) => d.date === dateStr);
-        revenue = dayData?.procedureRevenue || dayData?.revenue || 0;
+        revenue = dayData?.totalRevenue || dayData?.revenue || dayData?.procedureRevenue || 0;
         patients = dayData?.patients || 0;
-        procedureOrders = dayData?.procedureOrders || 0;
+        procedureOrders = dayData?.totalOrders || dayData?.procedureOrders || 0;
       } else if (revenueType === 'billing') {
         const dayData = billingDailyBreakdown.find((d) => d.date === dateStr);
         revenue = dayData?.revenue || 0;
@@ -301,6 +353,10 @@ const Reports = () => {
   };
 
   const formatBucketLabel = (key) => {
+    if (BUCKET_LABEL_OVERRIDES[key]) {
+      return BUCKET_LABEL_OVERRIDES[key];
+    }
+
     return String(key || '')
       .toLowerCase()
       .split('_')
@@ -308,12 +364,78 @@ const Reports = () => {
       .join(' ');
   };
 
+  const renderDoctorSectionTable = (section, title, emptyLabel, accentClasses = 'bg-indigo-50 text-indigo-700 border-indigo-100') => {
+    if (!section) return null;
+
+    return (
+      <div className="border rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h5 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">{title}</h5>
+          <div className="text-right">
+            <p className="text-xs text-gray-500">Revenue</p>
+            <p className="text-base font-semibold text-gray-900">{formatCurrency(section.revenue || 0)}</p>
+          </div>
+        </div>
+
+        {section.details?.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b text-left text-xs text-gray-500 uppercase">
+                  <th className="py-2 pr-2">Patient</th>
+                  <th className="py-2 pr-2">Visit</th>
+                  <th className="py-2 pr-2">Orders</th>
+                  <th className="py-2 pr-2">Items</th>
+                  <th className="py-2 pr-2">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {section.details.map((row, idx) => (
+                  <tr key={`${title}-${row.visitId}-${idx}`} className="border-b last:border-b-0">
+                    <td className="py-3 pr-2 text-sm text-gray-800">{row.patientName}</td>
+                    <td className="py-3 pr-2 text-sm text-gray-600">{row.visitId}</td>
+                    <td className="py-3 pr-2 text-sm text-gray-700">{row.ordersCount || row.items?.length || 0}</td>
+                    <td className="py-3 pr-2 text-sm text-gray-700">
+                      <div className="space-y-1">
+                        {(row.items || []).map((item, itemIdx) => (
+                          <div key={`${title}-${row.visitId}-item-${itemIdx}`} className="text-xs text-gray-600">
+                            {item.serviceName} ({formatCurrency(item.amount || 0)})
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-2 text-sm font-semibold text-emerald-700">{formatCurrency(row.amount || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">{emptyLabel}</div>
+        )}
+
+        {section.topItems?.length > 0 && (
+          <div className="mt-4 border-t pt-4">
+            <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Top Items (Selected Day)</p>
+            <div className="flex flex-wrap gap-2">
+              {section.topItems.map((item, idx) => (
+                <span key={`${title}-top-${idx}`} className={`px-2 py-1 rounded-full text-xs border ${accentClasses}`}>
+                  {item.serviceName} - {item.count} ({formatCurrency(item.revenue || 0)})
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Get revenue data based on selected type
   const getRevenueData = () => {
     if (revenueType === 'doctors') {
       return {
-        revenue: doctorStats?.summary?.totalProcedureRevenue || 0,
-        transactions: doctorStats?.summary?.totalProcedureOrders || 0,
+        revenue: doctorStats?.summary?.totalRevenue || doctorStats?.summary?.totalProcedureRevenue || 0,
+        transactions: doctorStats?.summary?.totalOrders || ((doctorStats?.summary?.totalProcedureOrders || 0) + (doctorStats?.summary?.totalLabOrders || 0) + (doctorStats?.summary?.totalEmergencyMedicationOrders || 0)),
         label: 'Doctors'
       };
     }
@@ -698,6 +820,10 @@ const Reports = () => {
   const selectedBillingBreakdown = selectedBillingUser?.categoryBreakdown || {};
   const isBillingCalendar = revenueType === 'billing';
   const medicalCategoryBreakdown = revenueStats?.completed?.medical?.categoryBreakdown || {};
+  const doctorCardUsage = doctorStats?.summary?.cardUsage || {
+    opened: { medical: 0, dermatology: 0, total: 0 },
+    activation: { medical: 0, dermatology: 0, total: 0 }
+  };
 
   return (
     <div className="space-y-6">
@@ -773,7 +899,7 @@ const Reports = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">
                 {revenueType === 'doctors'
-                  ? 'Procedure Revenue'
+                  ? 'Doctor Ordered Revenue'
                   : revenueType === 'billing'
                     ? 'Processed Revenue'
                   : revenueType === 'combined'
@@ -785,7 +911,7 @@ const Reports = () => {
               <p className="text-2xl font-semibold text-gray-900">{formatCurrency(revenueData.revenue)}</p>
               <p className="text-xs text-gray-500 mt-1">
                 {revenueType === 'doctors'
-                  ? `${revenueData.transactions} procedure orders`
+                  ? `${revenueData.transactions} total doctor orders`
                   : revenueType === 'billing'
                     ? `${revenueData.transactions} processed transactions`
                   : `${revenueData.transactions} transactions`}
@@ -803,7 +929,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Doctors</p>
-                  <p className="text-2xl font-semibold text-gray-900">{doctorStats?.doctors?.length || 0}</p>
+                  <p className="text-2xl font-semibold text-gray-900">{doctorOptions.length || 0}</p>
                 </div>
               </div>
             </div>
@@ -826,8 +952,68 @@ const Reports = () => {
                   <Activity className="h-6 w-6 text-emerald-600" />
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Procedure Orders</p>
-                  <p className="text-2xl font-semibold text-gray-900">{doctorStats?.summary?.totalProcedureOrders || 0}</p>
+                  <p className="text-sm font-medium text-gray-600">Total Doctor Orders</p>
+                  <p className="text-2xl font-semibold text-gray-900">{doctorStats?.summary?.totalOrders || ((doctorStats?.summary?.totalProcedureOrders || 0) + (doctorStats?.summary?.totalLabOrders || 0) + (doctorStats?.summary?.totalEmergencyMedicationOrders || 0))}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="flex items-center">
+                <div className="p-3 rounded-lg bg-blue-100">
+                  <CreditCard className="h-6 w-6 text-blue-700" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Medical Cards Opened</p>
+                  <p className="text-3xl font-bold text-gray-900">{doctorCardUsage.opened.medical || 0}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="flex items-center">
+                <div className="p-3 rounded-lg bg-cyan-100">
+                  <CreditCard className="h-6 w-6 text-cyan-700" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Medical Card Activations</p>
+                  <p className="text-3xl font-bold text-gray-900">{doctorCardUsage.activation.medical || 0}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="flex items-center">
+                <div className="p-3 rounded-lg bg-violet-100">
+                  <CreditCard className="h-6 w-6 text-violet-700" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Dermatology Cards Opened</p>
+                  <p className="text-3xl font-bold text-gray-900">{doctorCardUsage.opened.dermatology || 0}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="flex items-center">
+                <div className="p-3 rounded-lg bg-fuchsia-100">
+                  <CreditCard className="h-6 w-6 text-fuchsia-700" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Dermatology Card Activations</p>
+                  <p className="text-3xl font-bold text-gray-900">{doctorCardUsage.activation.dermatology || 0}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="flex items-center">
+                <div className="p-3 rounded-lg bg-teal-100">
+                  <Users className="h-6 w-6 text-teal-700" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Medical Treated (Dermatology)</p>
+                  <p className="text-3xl font-bold text-gray-900">{doctorStats?.summary?.medicalTreatedByDermatology || 0}</p>
                 </div>
               </div>
             </div>
@@ -1018,7 +1204,7 @@ const Reports = () => {
               <div className="text-right">
                 <p className="text-sm text-gray-600">
                   {revenueType === 'doctors'
-                    ? `Selected Doctor Procedure Revenue (${getMonthName(selectedMonth)})`
+                    ? `Selected Doctor Ordered Revenue (${getMonthName(selectedMonth)})`
                     : revenueType === 'billing'
                       ? `Selected Billing User Processed Revenue (${getMonthName(selectedMonth)})`
                     : `Monthly ${revenueType === 'combined' ? 'Total' : revenueType} Revenue`}
@@ -1026,7 +1212,7 @@ const Reports = () => {
                 <p className={`${isBillingCalendar ? 'text-xl' : 'text-2xl'} font-bold text-green-600`}>
                   {formatCurrency(
                     revenueType === 'doctors'
-                      ? (selectedDoctor?.procedureRevenue || 0)
+                      ? (selectedDoctor?.totalRevenue || selectedDoctor?.procedureRevenue || 0)
                       : revenueType === 'billing'
                         ? (selectedBillingUser?.totalAmount || 0)
                         : revenueData.revenue
@@ -1039,10 +1225,14 @@ const Reports = () => {
               <div className="mb-6">
                 <p className="text-sm font-medium text-gray-700 mb-3">Doctors</p>
                 <div className="flex flex-wrap gap-2">
-                  {(doctorStats?.doctors || []).map((doctor) => (
+                  {(doctorOptions || []).map((doctor) => (
                     <button
                       key={doctor.doctorId}
-                      onClick={() => setSelectedDoctorId(doctor.doctorId)}
+                      onClick={() => {
+                        setSelectedDoctorId(doctor.doctorId);
+                        setSelectedDoctorDay(null);
+                        setSelectedDoctorDayDetails(null);
+                      }}
                       className={`px-5 py-3 rounded-xl border text-base font-semibold transition-colors ${selectedDoctorId === doctor.doctorId
                         ? 'bg-indigo-600 text-white border-indigo-600'
                         : 'bg-white text-gray-700 border-gray-200 hover:border-indigo-300 hover:text-indigo-700'
@@ -1170,65 +1360,73 @@ const Reports = () => {
                     {selectedDoctor?.doctorName || 'Doctor'} - {new Date(selectedDoctorDay.date).toLocaleDateString()}
                   </h4>
                   <p className="text-sm text-gray-600 mt-1">
-                    Treated Patients: {selectedDoctorDay.patients || 0} | Procedure Orders: {selectedDoctorDay.procedureOrders || 0}
+                    Treated Patients: {selectedDoctorDay.patients || 0} | Total Orders: {selectedDoctorDay.totalOrders || selectedDoctorDay.procedureOrders || 0}
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-gray-500">Procedure Revenue</p>
-                  <p className="text-xl font-bold text-emerald-600">{formatCurrency(selectedDoctorDay.procedureRevenue || 0)}</p>
+                  <p className="text-xs text-gray-500">Total Revenue</p>
+                  <p className="text-xl font-bold text-emerald-600">{formatCurrency(selectedDoctorDay.totalRevenue || selectedDoctorDay.revenue || 0)}</p>
                 </div>
               </div>
 
-              {selectedDoctorDayDetails?.details?.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b text-left text-xs text-gray-500 uppercase">
-                        <th className="py-2 pr-2">Patient</th>
-                        <th className="py-2 pr-2">Visit</th>
-                        <th className="py-2 pr-2">Orders</th>
-                        <th className="py-2 pr-2">Procedures</th>
-                        <th className="py-2 pr-2">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(selectedDoctorDayDetails?.details || []).map((row, idx) => (
-                        <tr key={`${row.visitId}-${idx}`} className="border-b last:border-b-0">
-                          <td className="py-3 pr-2 text-sm text-gray-800">{row.patientName}</td>
-                          <td className="py-3 pr-2 text-sm text-gray-600">{row.visitId}</td>
-                          <td className="py-3 pr-2 text-sm text-gray-700">{row.procedures?.length || row.ordersCount || 0}</td>
-                          <td className="py-3 pr-2 text-sm text-gray-700">
-                            <div className="space-y-1">
-                              {(row.procedures || []).map((proc, pIdx) => (
-                                <div key={`${row.visitId}-proc-${pIdx}`} className="text-xs text-gray-600">
-                                  {proc.serviceName} ({formatCurrency(proc.amount || 0)})
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="py-3 pr-2 text-sm font-semibold text-emerald-700">{formatCurrency(row.amount || 0)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : doctorDayDetailsLoading ? (
-                <div className="text-sm text-gray-500">Loading procedures for selected day...</div>
-              ) : (
-                <div className="text-sm text-gray-500">No procedure orders for this doctor on this day.</div>
-              )}
+              {doctorDayDetailsLoading ? (
+                <div className="text-sm text-gray-500">Loading doctor orders for selected day...</div>
+              ) : selectedDoctorDayDetails ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-lg border bg-indigo-50">
+                      <p className="text-sm text-indigo-700">Procedures</p>
+                      <p className="text-lg font-semibold text-indigo-900">
+                        {formatCurrency(selectedDoctorDayDetails.summary?.procedureRevenue || 0)}
+                      </p>
+                      <p className="text-xs text-indigo-700 mt-1">{selectedDoctorDayDetails.summary?.procedureOrders || 0} orders</p>
+                    </div>
+                    <div className="p-3 rounded-lg border bg-cyan-50">
+                      <p className="text-sm text-cyan-700">Lab Ordered</p>
+                      <p className="text-lg font-semibold text-cyan-900">
+                        {formatCurrency(selectedDoctorDayDetails.summary?.labRevenue || 0)}
+                      </p>
+                      <p className="text-xs text-cyan-700 mt-1">{selectedDoctorDayDetails.summary?.labOrders || 0} orders</p>
+                    </div>
+                    <div className="p-3 rounded-lg border bg-rose-50">
+                      <p className="text-sm text-rose-700">Emergency Medication</p>
+                      <p className="text-lg font-semibold text-rose-900">
+                        {formatCurrency(selectedDoctorDayDetails.summary?.emergencyMedicationRevenue || 0)}
+                      </p>
+                      <p className="text-xs text-rose-700 mt-1">{selectedDoctorDayDetails.summary?.emergencyMedicationOrders || 0} orders</p>
+                    </div>
+                    <div className="p-3 rounded-lg border bg-teal-50">
+                      <p className="text-sm text-teal-700">Medical Treated (Dermatology)</p>
+                      <p className="text-lg font-semibold text-teal-900">
+                        {selectedDoctorDayDetails.summary?.medicalTreatedByDermatology || 0}
+                      </p>
+                      <p className="text-xs text-teal-700 mt-1">marked completions</p>
+                    </div>
+                  </div>
 
-              {selectedDoctorDayDetails?.topProcedures?.length > 0 && (
-                <div className="mt-4 border-t pt-4">
-                  <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Top Procedures (Selected Day)</p>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedDoctorDayDetails.topProcedures.map((proc, idx) => (
-                      <span key={`top-proc-${idx}`} className="px-2 py-1 rounded-full text-xs bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {proc.serviceName} - {proc.count} ({formatCurrency(proc.revenue || 0)})
-                      </span>
-                    ))}
+                  <div className="space-y-4">
+                    {renderDoctorSectionTable(
+                      selectedDoctorDayDetails.sections?.procedures,
+                      'Procedure Orders',
+                      'No procedure orders for this doctor on this day.',
+                      'bg-indigo-50 text-indigo-700 border-indigo-100'
+                    )}
+                    {renderDoctorSectionTable(
+                      selectedDoctorDayDetails.sections?.labs,
+                      'Lab Orders',
+                      'No lab orders for this doctor on this day.',
+                      'bg-cyan-50 text-cyan-700 border-cyan-100'
+                    )}
+                    {renderDoctorSectionTable(
+                      selectedDoctorDayDetails.sections?.emergencyMedications,
+                      'Emergency Medication Orders',
+                      'No emergency medication orders for this doctor on this day.',
+                      'bg-rose-50 text-rose-700 border-rose-100'
+                    )}
                   </div>
                 </div>
+              ) : (
+                <div className="text-sm text-gray-500">No doctor orders found for this day.</div>
               )}
             </div>
           )}

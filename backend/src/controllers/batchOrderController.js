@@ -144,6 +144,18 @@ exports.createBatchOrder = async (req, res) => {
       }
     }
 
+    const getEffectiveServicePrice = (serviceInput) => {
+      const serviceData = validServices.find(s => s.id === serviceInput.serviceId);
+      const investigationData = serviceInput.investigationTypeId
+        ? validInvestigationTypes.find(i => i.id === serviceInput.investigationTypeId)
+        : null;
+
+      const hasCustomPrice = serviceInput.customPrice !== undefined && serviceInput.customPrice !== null;
+      return hasCustomPrice
+        ? Number(serviceInput.customPrice)
+        : (investigationData ? investigationData.price : serviceData.price);
+    };
+
     // Calculate total amount
     const totalAmount = services.reduce((total, service) => {
       const serviceData = validServices.find(s => s.id === service.serviceId);
@@ -193,7 +205,7 @@ exports.createBatchOrder = async (req, res) => {
             serviceId: service.serviceId,
             investigationTypeId: service.investigationTypeId || null,
             instructions: service.instructions || null,
-            customPrice: service.customPrice || null,
+            customPrice: service.customPrice ?? null,
             count: 0
           };
           uniqueServicesToAdd.push(serviceCounts[key]);
@@ -211,10 +223,7 @@ exports.createBatchOrder = async (req, res) => {
         if (existingService) {
           // Service already exists in batch order, skipping
           // Still add to newServicesAdded for billing calculation with count
-          const serviceData = validServices.find(s => s.id === service.serviceId);
-          const investigationData = service.investigationTypeId ?
-            validInvestigationTypes.find(i => i.id === service.investigationTypeId) : null;
-          const price = investigationData ? investigationData.price : serviceData.price;
+          const price = getEffectiveServicePrice(service);
 
           for (let i = 0; i < service.count; i++) {
             newServicesAdded.push({
@@ -226,10 +235,7 @@ exports.createBatchOrder = async (req, res) => {
           continue;
         }
 
-        const serviceData = validServices.find(s => s.id === service.serviceId);
-        const investigationData = service.investigationTypeId ?
-          validInvestigationTypes.find(i => i.id === service.investigationTypeId) : null;
-        const price = investigationData ? investigationData.price : serviceData.price;
+        const price = getEffectiveServicePrice(service);
 
         const newService = await prisma.batchOrderService.create({
           data: {
@@ -409,10 +415,7 @@ exports.createBatchOrder = async (req, res) => {
 
         // Add services to emergency billing
         for (const service of newServicesAdded) {
-          const serviceData = validServices.find(s => s.id === service.serviceId);
-          const investigationData = service.investigationTypeId ?
-            validInvestigationTypes.find(i => i.id === service.investigationTypeId) : null;
-          const price = investigationData ? investigationData.price : serviceData.price;
+          const price = service.price;
 
           // Check if service already exists
           const existingService = await prisma.billingService.findFirst({
@@ -1310,17 +1313,71 @@ exports.createLabTestOrders = async (req, res) => {
           });
         }
       } else {
-        // For lab tests without services (like Microbiology), add as billing service so it appears in billing report
-        await prisma.billingService.create({
-          data: {
-            billingId: billing.id,
-            serviceId: null, // No service link
-            quantity: 1,
-            unitPrice: order.labTest.price,
-            totalPrice: order.labTest.price
+          // BillingService requires a non-null serviceId. For lab tests without a linked
+          // service (e.g. legacy/custom microbiology), create/reuse a stable fallback LAB service.
+          const fallbackServiceCode = `LABTEST-${order.labTest.id}`;
+
+          let fallbackService = await prisma.service.findUnique({
+            where: { code: fallbackServiceCode },
+            select: { id: true }
+          });
+
+          if (!fallbackService) {
+            fallbackService = await prisma.service.create({
+              data: {
+                code: fallbackServiceCode,
+                name: order.labTest.name,
+                category: 'LAB',
+                price: order.labTest.price,
+                unit: order.labTest.unit || 'UNIT',
+                description: `Auto-generated LAB service for lab test ${order.labTest.name}`,
+                isActive: true
+              },
+              select: { id: true }
+            });
           }
-        });
-        console.log(`[createLabTestOrders] Lab test "${order.labTest.name}" (${order.labTest.price}) added to billing as line item`);
+
+          // Backfill LabTest.serviceId so future orders use the normal path.
+          if (!order.labTest.serviceId) {
+            await prisma.labTest.update({
+              where: { id: order.labTest.id },
+              data: { serviceId: fallbackService.id }
+            });
+          }
+
+          const existingFallbackLine = await prisma.billingService.findFirst({
+            where: {
+              billingId: billing.id,
+              serviceId: fallbackService.id
+            }
+          });
+
+          if (existingFallbackLine) {
+            await prisma.billingService.update({
+              where: {
+                billingId_serviceId: {
+                  billingId: billing.id,
+                  serviceId: fallbackService.id
+                }
+              },
+              data: {
+                quantity: { increment: 1 },
+                totalPrice: { increment: order.labTest.price }
+              }
+            });
+          } else {
+            await prisma.billingService.create({
+              data: {
+                billingId: billing.id,
+                serviceId: fallbackService.id,
+                quantity: 1,
+                unitPrice: order.labTest.price,
+                totalPrice: order.labTest.price
+              }
+            });
+          }
+
+          console.log(`[createLabTestOrders] Lab test "${order.labTest.name}" (${order.labTest.price}) added to billing via fallback LAB service ${fallbackServiceCode}`);
       }
     }
 
