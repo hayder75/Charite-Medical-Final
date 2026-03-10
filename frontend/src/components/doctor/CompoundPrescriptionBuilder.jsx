@@ -139,17 +139,25 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
     return parsed;
   };
 
+  const toPrintablePatientName = (name) => {
+    const normalized = String(name || '').trim();
+    return normalized ? normalized.toUpperCase() : 'N/A';
+  };
+
   const printAllPrescriptions = async () => {
     if (existingPrescriptions.length === 0) return;
 
     try {
-      let patientData = visit?.patient;
-      let doctorData = visit?.doctor;
+      const firstPrescription = existingPrescriptions[0] || {};
+      let patientData = firstPrescription.patient || visit?.patient;
+      let doctorData = firstPrescription.doctor || visit?.doctor;
 
-      const patientName = patientData?.name || 'N/A';
+      const patientName = toPrintablePatientName(patientData?.name);
       const patientCardNumber = patientData?.id || 'N/A';
       const patientGender = (patientData?.gender?.charAt(0) || 'N/A').toUpperCase();
       const patientAge = patientData?.dob ? Math.floor((new Date() - new Date(patientData.dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 'N/A';
+      const fallbackDoctor = existingPrescriptions.find((p) => p?.doctor?.fullname)?.doctor;
+      doctorData = doctorData || fallbackDoctor;
       const doctorName = doctorData?.fullname || 'Dr. Unknown';
       const doctorQualification = doctorData?.qualifications?.join(', ') || 'Dermatology';
 
@@ -275,7 +283,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
         doctorData = visit.doctor;
       }
 
-      const patientName = patientData?.name || 'N/A';
+      const patientName = toPrintablePatientName(patientData?.name);
       const patientCardNumber = patientData?.id || 'N/A';
       const patientGender = (patientData?.gender?.charAt(0) || 'N/A').toUpperCase();
       const patientAge = patientData?.dob ? Math.floor((new Date() - new Date(patientData.dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 'N/A';
@@ -351,7 +359,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
               </div>
               
               <div class="patient-section">
-                <div><span class="info-label">Patient:</span> ${patientName?.toUpperCase()}</div>
+                <div><span class="info-label">Patient:</span> ${patientName}</div>
                 <div><span class="info-label">Card No:</span> #${patientCardNumber}</div>
                 <div><span class="info-label">Age/Sex:</span> ${patientAge}Y / ${patientGender}</div>
                 <div style="text-align: right;"><span class="info-label">Rx No:</span> ${prescription.referenceNumber}</div>

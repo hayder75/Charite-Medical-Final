@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FileText, ChevronDown, ChevronUp, CheckCircle, Plus, X, AlertTriangle } from 'lucide-react';
-import AsyncCreatableSelect from 'react-select/async-creatable';
+import AsyncSelect from 'react-select/async';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -160,19 +160,6 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
       })));
   };
 
-  const createCustomDiseaseOption = (inputValue) => {
-    const name = String(inputValue || '').trim();
-    if (!name) return null;
-
-    return {
-      label: `${name} (Custom)`,
-      value: `custom-${Date.now()}`,
-      name,
-      code: 'CUSTOM',
-      isCustom: true
-    };
-  };
-
   const handleDiseaseSelection = (option) => {
     setSelectedDisease(option);
     setDiseaseSearchInput(option?.label || '');
@@ -180,21 +167,6 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
 
   const resolveDiseaseId = async () => {
     if (!selectedDisease) return null;
-
-    if (selectedDisease.isCustom || selectedDisease.__isNew__ || String(selectedDisease.value || '').startsWith('custom-')) {
-      const customName = String(selectedDisease.name || selectedDisease.label || '').replace(/\s*\(Custom\)\s*$/i, '').trim();
-      if (!customName) {
-        throw new Error('Custom disease name is empty');
-      }
-
-      const customDiseaseRes = await api.post('/diseases', {
-        name: customName,
-        category: 'Other',
-        isReportable: false
-      });
-
-      return customDiseaseRes.data.id;
-    }
 
     return selectedDisease.value;
   };
@@ -274,50 +246,32 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div className="col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Search Disease (ICD/WHO) or Add Custom</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Search Disease (ICD/WHO)</label>
             <div className="flex gap-2">
               <div className="flex-1">
-                <AsyncCreatableSelect
+                <AsyncSelect
                   cacheOptions
                   loadOptions={loadDiseaseOptions}
-                  defaultOptions
+                  defaultOptions={false}
                   styles={diseaseSelectStyles}
                   value={selectedDisease}
                   onChange={handleDiseaseSelection}
                   inputValue={diseaseSearchInput}
+                  openMenuOnClick={false}
+                  openMenuOnFocus={false}
+                  components={{ DropdownIndicator: null, IndicatorSeparator: null }}
+                  noOptionsMessage={() => (diseaseSearchInput ? 'No disease found' : 'Type to search diseases')}
                   onInputChange={(value, actionMeta) => {
                     if (actionMeta.action === 'input-change') {
                       setDiseaseSearchInput(value);
                     }
                     return value;
                   }}
-                  onCreateOption={(inputValue) => {
-                    const option = createCustomDiseaseOption(inputValue);
-                    if (option) {
-                      handleDiseaseSelection(option);
-                    }
-                  }}
-                  formatCreateLabel={(inputValue) => `Use "${inputValue}" as custom disease`}
-                  placeholder="Type to search diseases (e.g. Malaria, Typhoid)..."
+                  placeholder="Type disease name/code (e.g. Malaria, A00)..."
                   className="react-select-container"
                   classNamePrefix="react-select"
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const option = createCustomDiseaseOption(diseaseSearchInput);
-                  if (!option) {
-                    toast.error('Type a disease name first');
-                    return;
-                  }
-
-                  handleDiseaseSelection(option);
-                }}
-                className="px-3 py-2 text-sm bg-purple-100 text-purple-700 rounded hover:bg-purple-200 whitespace-nowrap"
-              >
-                + Custom
-              </button>
             </div>
           </div>
 
