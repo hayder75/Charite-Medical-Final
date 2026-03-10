@@ -23,7 +23,7 @@ import AccommodationTab from '../../components/doctor/AccommodationTab';
 import CompoundPrescriptionBuilder from '../../components/doctor/CompoundPrescriptionBuilder';
 import Layout from '../../components/common/Layout';
 
-const getConsultationCacheKey = (doctorId, visitId) => `doctor-consultation-cache:${doctorId || 'unknown'}:${visitId || 'unknown'}`;
+const getConsultationCacheKey = (doctorScope, visitId) => `doctor-consultation-cache:${doctorScope || 'unknown'}:${visitId || 'unknown'}`;
 
 const NOTE_FIELDS = [
   { key: 'chiefComplaint', label: 'Chief Complaint' },
@@ -246,9 +246,14 @@ const PatientConsultationPage = () => {
     return currentUser?.role === 'DERMATOLOGY' || qualifications.some((q) => q.includes('DERM'));
   }, [currentUser]);
 
+  const doctorCacheScope = useMemo(
+    () => currentUser?.id || currentUser?.userId || currentUser?.username || 'unknown',
+    [currentUser]
+  );
+
   const consultationCacheKey = useMemo(
-    () => getConsultationCacheKey(currentUser?.id, visitId),
-    [currentUser?.id, visitId]
+    () => getConsultationCacheKey(doctorCacheScope, visitId),
+    [doctorCacheScope, visitId]
   );
 
   // Memoize tabs array to prevent recreation on every render
@@ -289,8 +294,15 @@ const PatientConsultationPage = () => {
   // Hydrate from session cache first to keep consultation data visible on browser refresh.
   useEffect(() => {
     try {
-      if (!consultationCacheKey) return;
-      const raw = sessionStorage.getItem(consultationCacheKey);
+      if (!visitId) return;
+
+      const candidateKeys = [
+        consultationCacheKey,
+        getConsultationCacheKey('unknown', visitId),
+        getConsultationCacheKey(currentUser?.id, visitId)
+      ].filter(Boolean);
+
+      const raw = candidateKeys.map((k) => sessionStorage.getItem(k)).find(Boolean);
       if (!raw) return;
 
       const cached = JSON.parse(raw);
@@ -305,7 +317,7 @@ const PatientConsultationPage = () => {
     } catch (cacheError) {
       console.warn('[Consultation] Failed to restore session cache:', cacheError);
     }
-  }, [consultationCacheKey]);
+  }, [consultationCacheKey, currentUser?.id, visitId]);
 
   // If current activeTab is not available for this user, switch to the first available tab
   useEffect(() => {
@@ -388,12 +400,33 @@ const PatientConsultationPage = () => {
         return;
       }
 
-      setVisit(response.data);
+      const normalizedVisit = {
+        ...response.data,
+        // Protect against occasional partial payloads on reload where patient relation may be missing.
+        patient: response.data?.patient || visit?.patient || null
+      };
+
+      // If still missing patient object, fetch patient summary and attach it before render/cache.
+      if (!normalizedVisit.patient && normalizedVisit.patientId) {
+        try {
+          const historyRes = await api.get(`/doctors/patient-history/${normalizedVisit.patientId}`);
+          if (historyRes?.data?.patient) {
+            normalizedVisit.patient = {
+              ...historyRes.data.patient,
+              mobile: historyRes.data.patient.phone || historyRes.data.patient.mobile
+            };
+          }
+        } catch (historyErr) {
+          console.warn('[Consultation] Could not hydrate patient from history:', historyErr?.message || historyErr);
+        }
+      }
+
+      setVisit(normalizedVisit);
 
       // Set all vitals from the visit data (already included)
       // Sort by createdAt descending to get most recent first
-      if (response.data.vitals && response.data.vitals.length > 0) {
-        const sortedVitals = [...response.data.vitals].sort((a, b) =>
+      if (normalizedVisit.vitals && normalizedVisit.vitals.length > 0) {
+        const sortedVitals = [...normalizedVisit.vitals].sort((a, b) =>
           new Date(b.createdAt) - new Date(a.createdAt)
         );
         setAllVitals(sortedVitals);
@@ -407,7 +440,7 @@ const PatientConsultationPage = () => {
       // Fetch dental record if user is a dentist
       if (currentUser?.qualifications?.includes('Dentist')) {
         try {
-          const dentalResponse = await api.get(`/dental/records/${response.data.patientId}/${visitId}`);
+          const dentalResponse = await api.get(`/dental/records/${normalizedVisit.patientId}/${visitId}`);
           setDentalRecord(dentalResponse.data.dentalRecord);
         } catch (error) {
           if (error.response?.status === 404) {
@@ -423,12 +456,15 @@ const PatientConsultationPage = () => {
       // Persist latest consultation snapshot per doctor+visit to survive refresh.
       try {
         const snapshot = {
-          visit: response.data,
-          vitals: response.data?.vitals || [],
+          visit: normalizedVisit,
+          vitals: normalizedVisit?.vitals || [],
           dentalRecord,
           savedAt: Date.now()
         };
-        sessionStorage.setItem(consultationCacheKey, JSON.stringify(snapshot));
+        // Persist only meaningful snapshots to avoid overwriting good cache with patient-less payloads.
+        if (snapshot.visit?.id && snapshot.visit?.patient) {
+          sessionStorage.setItem(consultationCacheKey, JSON.stringify(snapshot));
+        }
       } catch (cacheError) {
         console.warn('[Consultation] Failed to persist cache:', cacheError);
       }

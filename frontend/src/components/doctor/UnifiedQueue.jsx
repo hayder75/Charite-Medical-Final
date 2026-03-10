@@ -14,7 +14,7 @@ import ImageViewer from '../common/ImageViewer';
 import DoctorServiceOrdering from './DoctorServiceOrdering';
 import { useAuth } from '../../contexts/AuthContext';
 
-const getDoctorQueueCacheKey = (doctorId) => `doctor-unified-queue-cache:${doctorId || 'unknown'}`;
+const getDoctorQueueCacheKey = (doctorScope) => `doctor-unified-queue-cache:${doctorScope || 'unknown'}`;
 
 const UnifiedQueue = () => {
   const navigate = useNavigate();
@@ -33,7 +33,8 @@ const UnifiedQueue = () => {
   const [globalQueue, setGlobalQueue] = useState([]);
   const [isSearchingGlobal, setIsSearchingGlobal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const queueCacheKey = getDoctorQueueCacheKey(currentUser?.id);
+  const doctorCacheScope = currentUser?.id || currentUser?.userId || currentUser?.username || 'unknown';
+  const queueCacheKey = getDoctorQueueCacheKey(doctorCacheScope);
 
   useEffect(() => {
     try {
