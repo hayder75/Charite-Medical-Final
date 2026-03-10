@@ -7,7 +7,6 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
   const [services, setServices] = useState([]);
   const [nurses, setNurses] = useState([]);
   const [selectedServices, setSelectedServices] = useState([]);
-  const [quantities, setQuantities] = useState({});
   const [customPrices, setCustomPrices] = useState({});
   const [selectedNurse, setSelectedNurse] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -95,18 +94,11 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
   };
 
   const toggleService = (service) => {
-    setSelectedServices(prev => {
-      const exists = prev.find(s => s.id === service.id);
-      if (exists) {
-        const nextQuantities = { ...quantities };
-        delete nextQuantities[service.id];
-        setQuantities(nextQuantities);
-        return prev.filter(s => s.id !== service.id);
-      }
-
-      setQuantities((prevQty) => ({ ...prevQty, [service.id]: 1 }));
-      return [...prev, service];
-    });
+    setSelectedServices(prev =>
+      prev.find(s => s.id === service.id)
+        ? prev.filter(s => s.id !== service.id)
+        : [...prev, service]
+    );
     // Set default custom price for variable price services
     if (service.isVariablePrice && service.minPrice) {
       setCustomPrices(prev => ({
@@ -131,16 +123,8 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
     return service.price;
   };
 
-  const updateQuantity = (serviceId, qtyValue) => {
-    const qty = Math.max(1, parseInt(qtyValue, 10) || 1);
-    setQuantities((prev) => ({ ...prev, [serviceId]: qty }));
-  };
-
   const calculateTotal = () => {
-    return selectedServices.reduce((sum, service) => {
-      const qty = quantities[service.id] || 1;
-      return sum + (getServicePrice(service) * qty);
-    }, 0);
+    return selectedServices.reduce((sum, service) => sum + getServicePrice(service), 0);
   };
 
   const handleSubmitOrder = async () => {
@@ -164,15 +148,10 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
         }
       });
 
-      const expandedServiceIds = selectedServices.flatMap((service) => {
-        const qty = quantities[service.id] || 1;
-        return Array.from({ length: qty }, () => service.id);
-      });
-
       const orderData = {
         visitId: visit.id,
         patientId: visit.patient.id,
-        serviceIds: expandedServiceIds,
+        serviceIds: selectedServices.map(s => s.id),
         assignedNurseId: selectedNurse,
         servicePrices: Object.keys(servicePrices).length > 0 ? servicePrices : undefined,
         isDeferred: isDeferred,
@@ -188,7 +167,6 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
 
       // Reset form
       setSelectedServices([]);
-      setQuantities({});
       setSelectedNurse('');
       setInstructions('');
       setIsDeferred(false);
@@ -297,16 +275,6 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
                   )}
                 </div>
                 <div className="flex items-center">
-                  <div className="flex items-center mr-3 gap-2">
-                    <label className="text-xs font-semibold text-gray-600">Qty:</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={quantities[service.id] || 1}
-                      onChange={(e) => updateQuantity(service.id, e.target.value)}
-                      className="w-16 px-2 py-1.5 text-sm border-2 border-blue-300 rounded-lg text-center outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-blue-900 bg-white"
-                    />
-                  </div>
                   {service.isVariablePrice ? (
                     <input
                       type="number"
@@ -314,11 +282,11 @@ const NurseServiceOrderingInterface = ({ visit, onOrdersPlaced }) => {
                       max={service.maxPrice || 999999}
                       value={customPrices[service.id] || service.minPrice || ''}
                       onChange={(e) => handleCustomPriceChange(service.id, e.target.value)}
-                      className="w-24 p-1.5 text-sm border-2 border-blue-300 rounded-lg text-blue-900 font-semibold"
+                      className="w-24 p-1 text-sm border rounded"
                       placeholder={`${service.minPrice}-${service.maxPrice}`}
                     />
                   ) : (
-                    <span className="font-medium" style={{ color: '#0C0E0B' }}>ETB {(service.price * (quantities[service.id] || 1)).toLocaleString()}</span>
+                    <span className="font-medium" style={{ color: '#0C0E0B' }}>ETB {service.price.toLocaleString()}</span>
                   )}
           </div>
 
