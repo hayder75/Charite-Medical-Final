@@ -1,13 +1,13 @@
 // Note: Prisma client will be passed as parameter to avoid multiple instances
 
 /**
- * Generate a unique visitUid with sequential numbering
- * Format: VISIT-YYMMDD-SEQ
- * 
+ * Generate a unique visitUid with random 3-digit suffix
+ * Format: VISIT-YYMMDD-RND
+ *
  * Uses:
  * - Date (YYMMDD) for date-based grouping
- * - Sequential number starting from 01, incrementing for each visit on the same day
- * - Automatically handles 2-digit (01-99) and 3-digit (100+) numbers
+ * - Random 3-digit suffix (001-999)
+ * - Existence checks + fallback pool selection for high-concurrency safety
  * 
  * @param {Object} prisma - Prisma client instance
  * @returns {Promise<string>} A unique visitUid
@@ -17,52 +17,59 @@ async function generateVisitUid(prisma) {
   const year = now.getFullYear().toString().slice(-2); // Last 2 digits of year
   const month = (now.getMonth() + 1).toString().padStart(2, '0');
   const day = now.getDate().toString().padStart(2, '0');
-  
   const dateStr = `${year}${month}${day}`; // YYMMDD
-  
-  // Find the last visit created today
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  
-  const lastVisit = await prisma.visit.findFirst({
+
+  const buildVisitUid = (num) => `VISIT-${dateStr}-${String(num).padStart(3, '0')}`;
+
+  // Fast random attempts first to avoid scanning daily rows on each request.
+  for (let i = 0; i < 25; i++) {
+    const randomNum = Math.floor(Math.random() * 999) + 1; // 1..999
+    const candidateUid = buildVisitUid(randomNum);
+
+    const existing = await prisma.visit.findUnique({
+      where: { visitUid: candidateUid },
+      select: { id: true }
+    });
+
+    if (!existing) {
+      return candidateUid;
+    }
+  }
+
+  // Fallback: deterministically choose from the remaining suffix pool for the day.
+  const existingVisits = await prisma.visit.findMany({
     where: {
-      createdAt: {
-        gte: startOfDay,
-        lte: endOfDay
-      },
       visitUid: {
         startsWith: `VISIT-${dateStr}-`
       }
     },
-    orderBy: {
-      createdAt: 'desc'
-    },
-    select: {
-      visitUid: true
-    }
+    select: { visitUid: true }
   });
-  
-  let seqNumber = 1;
-  
-  if (lastVisit) {
-    // Extract the sequence number from the last visit ID
-    // Format: VISIT-YYMMDD-SEQ
-    const parts = lastVisit.visitUid.split('-');
-    if (parts.length === 3 && parts[0] === 'VISIT' && parts[1] === dateStr) {
-      const lastSeq = parseInt(parts[2], 10);
-      if (!isNaN(lastSeq)) {
-        seqNumber = lastSeq + 1;
-      }
+
+  const usedSuffixes = new Set(
+    existingVisits
+      .map(v => {
+        const parts = v.visitUid.split('-');
+        if (parts.length !== 3 || parts[0] !== 'VISIT' || parts[1] !== dateStr) return null;
+        const parsed = parseInt(parts[2], 10);
+        return Number.isInteger(parsed) && parsed >= 1 && parsed <= 999 ? parsed : null;
+      })
+      .filter(Boolean)
+  );
+
+  const available = [];
+  for (let n = 1; n <= 999; n++) {
+    if (!usedSuffixes.has(n)) {
+      available.push(n);
     }
   }
-  
-  // Format sequence number (2 digits for 01-99, 3+ digits for 100+)
-  // Don't pad beyond 2 digits - let it grow naturally (01, 02, ..., 99, 100, 101, ...)
-  const seqStr = seqNumber < 100 ? seqNumber.toString().padStart(2, '0') : seqNumber.toString();
-  
-  // Combine: VISIT-YYMMDD-SEQ
-  // Example: VISIT-260112-01, VISIT-260112-02, ..., VISIT-260112-99, VISIT-260112-100
-  return `VISIT-${dateStr}-${seqStr}`;
+
+  if (available.length === 0) {
+    throw new Error('Daily visit ID capacity exhausted for today (001-999).');
+  }
+
+  const chosen = available[Math.floor(Math.random() * available.length)];
+  return buildVisitUid(chosen);
 }
 
 /**
@@ -87,7 +94,6 @@ async function generateUniqueVisitUid(createFunction, prisma, maxRetries = 10) {
       if (error.code === 'P2002' && error.meta?.target?.includes('visitUid')) {
         retries++;
         if (retries >= maxRetries) {
-          console.error('❌ Failed to generate unique visitUid after', maxRetries, 'attempts');
           throw new Error('Unable to generate unique visit ID after multiple attempts. Please try again.');
         }
         // Wait a tiny bit before retrying (allows time for other concurrent requests to complete)
