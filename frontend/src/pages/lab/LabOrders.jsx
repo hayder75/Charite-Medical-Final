@@ -2034,10 +2034,8 @@ const LabOrders = () => {
                                             if (isBloodFilmSpecies) {
                                               const resultValue = testResults[selectedService]?.results?.result;
                                               if (['Hemoparasite Seen', 'Positive'].includes(resultValue)) {
-                                                const density = testResults[selectedService]?.results?.parasite_density || '';
                                                 let remark = 'Hemoparasite seen.';
                                                 if (newResults.species) remark += ` Species: ${newResults.species}.`;
-                                                if (density) remark += ` Parasite density: ${density}.`;
                                                 newResults.remark = remark;
                                               }
                                             }
@@ -2089,18 +2087,15 @@ const LabOrders = () => {
                                         testResults[selectedService]?.labTest?.name?.toLowerCase().includes('malaria'));
 
                                     if (isMalariaResult) {
-                                      // Clear species and density if result is negative/no hemoparasite
+                                      // Clear species if result is negative/no hemoparasite
                                       if (['Negative', 'No Hemoparasite seen'].includes(e.target.value)) {
                                         newResults.species = '';
-                                        newResults.parasite_density = '';
                                         newResults.remark = 'No Hemoparasite seen.';
                                       } else if (['Positive', 'Hemoparasite Seen'].includes(e.target.value)) {
                                         // Auto-fill remark with positive message (species will be added if selected)
                                         const species = newResults.species || '';
-                                        const density = newResults.parasite_density || '';
                                         let remark = 'Hemoparasite seen.';
                                         if (species) remark += ` Species: ${species}.`;
-                                        if (density) remark += ` Parasite density: ${density}.`;
                                         newResults.remark = remark;
                                       }
                                     }
@@ -2180,10 +2175,8 @@ const LabOrders = () => {
                                       });
                                     } else if (['Positive', 'Hemoparasite Seen'].includes(malariaResult)) {
                                       const species = testResults[selectedService]?.results?.species || '';
-                                      const density = testResults[selectedService]?.results?.parasite_density || '';
                                       let remark = 'Hemoparasite seen.';
                                       if (species) remark += ` Species: ${species}.`;
-                                      if (density) remark += ` Parasite density: ${density}.`;
                                       updateTestResult(selectedService, 'results', {
                                         ...testResults[selectedService].results,
                                         remark
