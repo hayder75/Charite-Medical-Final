@@ -588,12 +588,11 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, idx) => {
         const cleanedName = (med.name || '').toUpperCase();
-        const strength = med.strength && med.strength !== 'N/A' ? med.strength : '';
         const instructionText = med.instructionText || med.instructions || '';
 
         return `
                 <div class="medication-item">
-                  <div class="medication-name"># ${idx + 1}. ${cleanedName} ${strength}</div>
+                          <div class="medication-name"># ${idx + 1}. ${cleanedName}</div>
                   ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                 </div>
               `;
@@ -679,7 +678,6 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="font-medium text-gray-900">{medication.name}</p>
-                    <p className="text-xs text-gray-500">{medication.strength} {medication.dosageForm}</p>
                   </div>
                   <span className="text-xs font-semibold text-green-600">{medication.availableQuantity} in stock</span>
                 </div>
@@ -806,7 +804,6 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <h5 className="font-bold text-gray-900 text-lg">{index + 1}. {medication.name}</h5>
-                  <p className="text-sm text-gray-500">{medication.strength} {medication.dosageForm}</p>
                 </div>
                 <button
                   onClick={() => removeMedication(index)}
@@ -873,7 +870,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
             {prescribedMedications.map((order, idx) => (
               <div key={idx} className="p-3 bg-gray-50 border rounded-lg flex justify-between items-center">
                 <div className="flex-1">
-                  <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.name)} {order.strength && order.strength !== 'N/A' ? order.strength : ''}</p>
+                  <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.name)}</p>
                   {order.instructionText && (
                     <p className="text-xs text-gray-600 ml-4 italic">
                       {order.instructionText}
@@ -924,8 +921,8 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               </button>
             </div>
             <form onSubmit={handleUpdateOrder} className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div className="md:col-span-2">
+              <div className="space-y-4 mb-4">
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Medication Name</label>
                   <input
                     type="text"
@@ -936,58 +933,17 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Strength</label>
-                  <input
-                    type="text"
-                    value={editingOrder.strength}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, strength: e.target.value })}
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                  <textarea
+                    value={editingOrder.instructionText || editingOrder.instructions || ''}
+                    onChange={(e) => setEditingOrder({
+                      ...editingOrder,
+                      instructionText: e.target.value,
+                      instructions: e.target.value
+                    })}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Dosage Form</label>
-                  <input
-                    type="text"
-                    value={editingOrder.dosageForm}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, dosageForm: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                  <input
-                    type="text"
-                    value={editingOrder.quantity}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, quantity: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
-                  <input
-                    type="text"
-                    value={editingOrder.frequencyText || editingOrder.frequency}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, frequency: e.target.value, frequencyText: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
-                  <input
-                    type="text"
-                    value={editingOrder.durationText || editingOrder.duration}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, duration: e.target.value, durationText: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Route</label>
-                  <input
-                    type="text"
-                    value={editingOrder.route}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, route: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    rows={4}
+                    placeholder="e.g. 1 tablet twice daily for 5 days after meals"
                   />
                 </div>
               </div>
