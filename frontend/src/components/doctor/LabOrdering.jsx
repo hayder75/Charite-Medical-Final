@@ -472,7 +472,7 @@ const LabOrdering = ({ visitId, patientId, patient, visit, onOrdersPlaced, exist
                     </head>
                     <body>
                       <div class="header">
-                        <div class="clinic-name">Charite Medium Clinic</div>
+                        <div class="clinic-name">Selihom Medical Clinic</div>
                         <div class="clinic-sub">Laboratory Order Form</div>
                       </div>
                       

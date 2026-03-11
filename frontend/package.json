@@ -1,7 +1,7 @@
 {
   "name": "tenalesew-medical-center-frontend",
   "version": "1.0.0",
-  "description": "Charite Medium Clinic Frontend",
+  "description": "Selihom Medical Clinic Frontend",
   "main": "index.js",
   "scripts": {
     "dev": "vite",

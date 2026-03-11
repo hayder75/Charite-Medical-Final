@@ -125,7 +125,7 @@ const LoginPage = () => {
             <div className="relative mb-8">
               <img
                 src="/clinic-logo.jpg"
-                alt="Charite Medium Clinic Logo"
+                alt="Selihom Medical Clinic Logo"
                 className="w-64 h-64 mx-auto rounded-full object-cover shadow-2xl border-4 border-white"
               />
               {/* Floating elements */}
@@ -141,7 +141,7 @@ const LoginPage = () => {
             <div className="text-white space-y-4">
               <h3 className="text-3xl font-bold">Welcome to</h3>
               <h2 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Charite Medium Clinic
+                Selihom Medical Clinic
               </h2>
               <p className="text-xl text-gray-600 max-w-md mx-auto">
                 We are committed to providing exceptional healthcare services with compassion and excellence.
@@ -160,7 +160,7 @@ const LoginPage = () => {
               Sign In
             </h2>
             <p className="text-xl font-medium text-gray-700">
-              Access your Charite Medium Clinic account
+              Access your Selihom Medical Clinic account
             </p>
           </div>
 

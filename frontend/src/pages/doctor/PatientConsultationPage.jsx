@@ -769,7 +769,7 @@ const PatientConsultationPage = () => {
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">Charite Medium Clinic</div>
+            <div class="clinic-name">Selihom Medical Clinic</div>
             <div>Laboratory Order Form</div>
           </div>
           
@@ -875,7 +875,7 @@ const PatientConsultationPage = () => {
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">Charite Medium Clinic</div>
+            <div class="clinic-name">Selihom Medical Clinic</div>
             <div>Radiology Order Form</div>
           </div>
           

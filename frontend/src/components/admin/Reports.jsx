@@ -709,7 +709,7 @@ const Reports = () => {
             <div class="header-left">
               <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
               <div class="clinic-info">
-                <h1 class="clinic-name">Charite Medium Clinic</h1>
+                <h1 class="clinic-name">Selihom Medical Clinic</h1>
                 <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
               </div>
             </div>
@@ -775,7 +775,7 @@ const Reports = () => {
           </div>
 
           <div class="print-footer">
-            Charite Medium Clinic - Financial Analytics Report - Generated on ${new Date().toLocaleString()}
+            Selihom Medical Clinic - Financial Analytics Report - Generated on ${new Date().toLocaleString()}
           </div>
         </body>
       </html>

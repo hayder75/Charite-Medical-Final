@@ -424,7 +424,7 @@ const ComprehensivePatientHistory = () => {
               <div class="header-left">
                 <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
                 <div class="clinic-info">
-                  <h1 class="clinic-name">Charite Medium Clinic</h1>
+                  <h1 class="clinic-name">Selihom Medical Clinic</h1>
                   <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
                 </div>
               </div>
@@ -472,7 +472,7 @@ const ComprehensivePatientHistory = () => {
             </div>
 
             <div class="print-footer">
-              Charite Medium Clinic - Generated on ${new Date().toLocaleString()}
+              Selihom Medical Clinic - Generated on ${new Date().toLocaleString()}
             </div>
           </div>
         </body>
@@ -795,7 +795,7 @@ const ComprehensivePatientHistory = () => {
             <div class="header-left">
               <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
               <div class="clinic-info">
-                <h1 class="clinic-name">Charite Medium Clinic</h1>
+                <h1 class="clinic-name">Selihom Medical Clinic</h1>
                 <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
               </div>
             </div>
@@ -878,7 +878,7 @@ const ComprehensivePatientHistory = () => {
           </div>
 
           <div class="print-footer">
-            This is a computer-generated report. Charite Medium Clinic. Generated on ${formatDateTime(currentDate)}
+            This is a computer-generated report. Selihom Medical Clinic. Generated on ${formatDateTime(currentDate)}
           </div>
         </body>
       </html>
@@ -1137,7 +1137,7 @@ const ComprehensivePatientHistory = () => {
           <div class="header-left">
             <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
             <div class="clinic-info">
-              <h1 class="clinic-name">Charite Medium Clinic</h1>
+              <h1 class="clinic-name">Selihom Medical Clinic</h1>
               <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
             </div>
           </div>
@@ -1213,7 +1213,7 @@ const ComprehensivePatientHistory = () => {
         </div>
 
         <div class="print-footer">
-          This is a computer-generated report. Charite Medium Clinic. Generated on ${currentDate} ${currentTime}
+          This is a computer-generated report. Selihom Medical Clinic. Generated on ${currentDate} ${currentTime}
         </div>
       </body>
     </html>
@@ -1313,7 +1313,7 @@ const ComprehensivePatientHistory = () => {
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">Charite Medium Clinic</div>
+            <div class="clinic-name">Selihom Medical Clinic</div>
             <div>Patient Medical History Report</div>
           </div>
 
@@ -1542,7 +1542,7 @@ const ComprehensivePatientHistory = () => {
               <div style="font-size: 11px;">Date: _________________________</div>
             </div>
             <div style="text-align: center; font-size: 10px; color: #666; margin-top: 20px;">
-              <div>Charite Medium Clinic</div>
+              <div>Selihom Medical Clinic</div>
               <div>Generated on: ${formatDate(new Date())}</div>
             </div>
           </div>

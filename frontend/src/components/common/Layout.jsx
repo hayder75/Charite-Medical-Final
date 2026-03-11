@@ -233,10 +233,10 @@ const Layout = ({ children, title, subtitle }) => {
           <div className="flex items-center">
             <img
               src="/clinic-logo.jpg"
-              alt="Charite Medium Clinic"
+              alt="Selihom Medical Clinic"
               className="h-10 w-10 rounded-full object-cover border-2 border-white"
             />
-            <span className="ml-3 text-xl font-bold text-white">Charite Medium Clinic</span>
+            <span className="ml-3 text-xl font-bold text-white">Selihom Medical Clinic</span>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}

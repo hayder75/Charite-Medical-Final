@@ -536,7 +536,7 @@ const DailyCashManagement = () => {
               <div class="header-left">
                 <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
                 <div class="clinic-info">
-                  <h1 class="clinic-name">Charite Medium Clinic</h1>
+                  <h1 class="clinic-name">Selihom Medical Clinic</h1>
                   <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
                 </div>
               </div>
@@ -577,7 +577,7 @@ const DailyCashManagement = () => {
             </div>
 
             <div class="print-footer">
-              Charite Medium Clinic - Generated on ${new Date().toLocaleString()}
+              Selihom Medical Clinic - Generated on ${new Date().toLocaleString()}
             </div>
           </div>
         </body>
@@ -656,7 +656,7 @@ const DailyCashManagement = () => {
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">Charite Medium Clinic</div>
+            <div class="clinic-name">Selihom Medical Clinic</div>
             <div class="report-title">Daily Cash Transactions Report</div>
             <div>Date: ${selectedDate ? new Date(selectedDate).toLocaleDateString() : new Date().toLocaleDateString()}</div>
             <div>Generated: ${new Date().toLocaleString()}</div>
@@ -700,7 +700,7 @@ const DailyCashManagement = () => {
               <div style="font-size: 11px;">Date: _________________________</div>
             </div>
             <div style="text-align: center; font-size: 10px; color: #666; margin-top: 20px;">
-              <div>Charite Medium Clinic</div>
+              <div>Selihom Medical Clinic</div>
             </div>
           </div>
         </body>

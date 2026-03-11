@@ -241,7 +241,7 @@ const BillingPatientHistory = () => {
               <div class="header-left">
                 <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
                 <div class="clinic-info">
-                  <h1 class="clinic-name">Charite Medium Clinic</h1>
+                  <h1 class="clinic-name">Selihom Medical Clinic</h1>
                   <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
                 </div>
               </div>
@@ -394,7 +394,7 @@ const BillingPatientHistory = () => {
               <div class="header-left">
                 <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
                 <div class="clinic-info">
-                  <h1 class="clinic-name">Charite Medium Clinic</h1>
+                  <h1 class="clinic-name">Selihom Medical Clinic</h1>
                   <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
                 </div>
               </div>
@@ -521,7 +521,7 @@ const BillingPatientHistory = () => {
           <div class="receipt-container">
             ${billing.status === "PAID" ? `<div class="status-stamp">PAID</div>` : ""}
             <div class="header">
-              <h1 class="clinic-name">Charite Medium Clinic</h1>
+              <h1 class="clinic-name">Selihom Medical Clinic</h1>
               <h2 class="receipt-title">Service Receipt</h2>
               <div style="font-size: 9px; color: #64748b;">${currentDate} ${currentTime}</div>
             </div>
@@ -569,7 +569,7 @@ const BillingPatientHistory = () => {
             </div>
 
             <div class="footer">
-              Thank you for choosing Charite Medium Clinic<br>
+              Thank you for choosing Selihom Medical Clinic<br>
               Quality Healthcare You Can Trust
             </div>
           </div>
@@ -787,7 +787,7 @@ const BillingPatientHistory = () => {
             <div class="header-left">
               <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
               <div class="clinic-info">
-                <h1 class="clinic-name">Charite Medium Clinic</h1>
+                <h1 class="clinic-name">Selihom Medical Clinic</h1>
                 <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
               </div>
             </div>
@@ -873,7 +873,7 @@ const BillingPatientHistory = () => {
           </div>
 
           <div class="print-footer">
-            Computer Generated Report • Charite Medium Clinic • ${formatDateTime(currentDate)}
+            Computer Generated Report • Selihom Medical Clinic • ${formatDateTime(currentDate)}
           </div>
         </body>
       </html>
@@ -1057,7 +1057,7 @@ const BillingPatientHistory = () => {
             <div class="header-left">
               <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
               <div class="clinic-info">
-                <h1 class="clinic-name">Charite Medium Clinic</h1>
+                <h1 class="clinic-name">Selihom Medical Clinic</h1>
                 <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
               </div>
             </div>
@@ -1115,7 +1115,7 @@ const BillingPatientHistory = () => {
           </div>
 
           <div class="print-footer">
-            Computer Generated Report • Charite Medium Clinic • ${currentDate} ${currentTime}
+            Computer Generated Report • Selihom Medical Clinic • ${currentDate} ${currentTime}
           </div>
         </body>
       </html>

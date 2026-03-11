@@ -380,7 +380,7 @@ const ReferralPage = () => {
                             <div class="header-left">
                                 <img src="/clinic-logo.jpg" alt="" class="logo" onerror="this.style.display='none'">
                                 <div>
-                                    <h1 class="clinic-name">Charite Medium Clinic</h1>
+                                    <h1 class="clinic-name">Selihom Medical Clinic</h1>
                                     <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
                                 </div>
                             </div>
@@ -484,7 +484,7 @@ const ReferralPage = () => {
                         </div>
 
                         <div class="footer">
-                            This is an official medical referral document from Charite Medium Clinic.
+                            This is an official medical referral document from Selihom Medical Clinic.
                             <br>Generated on ${currentDate}
                         </div>
                     </div>

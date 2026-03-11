@@ -68,10 +68,10 @@ const PrintableMedicalCertificate = ({ certificate, onClose }) => {
         <div className="text-center py-8 border-b border-gray-300">
           <img
             src="/clinic-logo.jpg"
-            alt="Charite Medium Clinic Logo"
+            alt="Selihom Medical Clinic Logo"
             className="h-24 w-24 mx-auto mb-4 rounded-full object-cover border-2 border-gray-300"
           />
-          <h1 className="text-3xl font-bold text-black mb-2">Charite Medium Clinic</h1>
+          <h1 className="text-3xl font-bold text-black mb-2">Selihom Medical Clinic</h1>
         </div>
 
         {/* Certificate Title */}

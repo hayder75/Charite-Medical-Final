@@ -140,7 +140,7 @@ const PharmacyInvoices = () => {
           <div class="receipt-container">
             ${invoice.status === 'PAID' || invoice.status === 'DISPENSED' ? `<div class="status-stamp">${invoice.status}</div>` : ''}
             <div class="header">
-              <h1 class="clinic-name">Charite Medium Clinic</h1>
+              <h1 class="clinic-name">Selihom Medical Clinic</h1>
               <h2 class="receipt-title">Pharmacy Receipt</h2>
               <div style="font-size: 9px; color: #64748b;">${currentDate} ${currentTime}</div>
             </div>
@@ -180,7 +180,7 @@ const PharmacyInvoices = () => {
             </div>
 
             <div class="footer">
-              Thank you for choosing Charite Medium Clinic<br>
+              Thank you for choosing Selihom Medical Clinic<br>
               Quality Healthcare You Can Trust
             </div>
           </div>

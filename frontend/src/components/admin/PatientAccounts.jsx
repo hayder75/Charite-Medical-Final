@@ -780,7 +780,7 @@ const AccountDetailedView = ({ account, onClose }) => {
         <div class="container">
           <div class="header">
             <div>
-              <div class="clinic-name">Charite Medium Clinic</div>
+              <div class="clinic-name">Selihom Medical Clinic</div>
               <div class="clinic-tagline">Quality Healthcare You Can Trust</div>
             </div>
             <div>
@@ -904,7 +904,7 @@ const AccountDetailedView = ({ account, onClose }) => {
           ` : ''}
 
           <div class="footer">
-            <div>Thank you for choosing Charite Medium Clinic!</div>
+            <div>Thank you for choosing Selihom Medical Clinic!</div>
             <div>Generated: ${currentDate}</div>
           </div>
         </div>
@@ -958,7 +958,7 @@ const AccountDetailedView = ({ account, onClose }) => {
         <div class="container">
           <div class="header">
             <div>
-              <div class="clinic-name">Charite Medium Clinic</div>
+              <div class="clinic-name">Selihom Medical Clinic</div>
               <div class="clinic-tagline">Quality Healthcare You Can Trust</div>
             </div>
             <div>
@@ -1048,7 +1048,7 @@ const AccountDetailedView = ({ account, onClose }) => {
           ` : ''}
 
           <div class="footer">
-            <div>Thank you for choosing Charite Medium Clinic!</div>
+            <div>Thank you for choosing Selihom Medical Clinic!</div>
             <div>Generated: ${currentDate}</div>
           </div>
         </div>
