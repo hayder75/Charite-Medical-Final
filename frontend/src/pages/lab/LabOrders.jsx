@@ -1916,11 +1916,11 @@ const LabOrders = () => {
                                 }
                               }
 
-                              // Check if this is VDRL titer field - enable only when result is "Reactive"
+                              // Check if this is VDRL titer field - enable only when result is Positive
                               const isVDRLTiter = field.fieldName === 'titer' &&
                                 testResults[selectedService]?.labTest?.code === 'VDRL001';
                               const vdrlResult = testResults[selectedService]?.results?.result;
-                              const isTiterEnabled = !isVDRLTiter || vdrlResult === 'Reactive';
+                              const isTiterEnabled = !isVDRLTiter || vdrlResult === 'Positive';
 
                               // Check if this is Stool parasite_type field - enable only when parasite is "Seen"
                               const isStoolParasiteType = field.fieldName === 'parasite_type' &&
@@ -1938,8 +1938,10 @@ const LabOrders = () => {
                                     const newResults = { ...result.results };
                                     newResults[field.fieldName] = e.target.value;
 
-                                    // Special handling for VDRL: Clear titer if result becomes Non-reactive
-                                    if (isVDRLTiter && vdrlResult !== 'Reactive') {
+                                    // Special handling for VDRL: clear titer when result is not Positive
+                                    const isVDRLResult = field.fieldName === 'result' &&
+                                      testResults[selectedService]?.labTest?.code === 'VDRL001';
+                                    if (isVDRLResult && e.target.value !== 'Positive') {
                                       newResults.titer = '';
                                     }
 
@@ -1987,13 +1989,13 @@ const LabOrders = () => {
                                 }
                               }
 
-                              // Check if this is Blood Film species field - enable only when result is "Positive"
+                              // Check if this is Blood Film species field - enable only when result is Hemoparasite Seen
                               const isBloodFilmSpecies = field.fieldName === 'species' &&
                                 (testResults[selectedService]?.labTest?.code === 'PICT001' ||
                                   testResults[selectedService]?.labTest?.code === 'PBF001' ||
                                   testResults[selectedService]?.labTest?.name?.toLowerCase().includes('blood film'));
                               const malariaResult = testResults[selectedService]?.results?.result;
-                              const isSpeciesEnabled = !isBloodFilmSpecies || malariaResult === 'Positive';
+                              const isSpeciesEnabled = !isBloodFilmSpecies || ['Hemoparasite Seen', 'Positive'].includes(malariaResult);
 
                               // Get current selected values (stored as comma-separated string)
                               const currentValues = fieldValue ? fieldValue.split(',').map(v => v.trim()) : [];
@@ -2031,9 +2033,9 @@ const LabOrders = () => {
                                             // Auto-update remark when species changes (for Blood Film)
                                             if (isBloodFilmSpecies) {
                                               const resultValue = testResults[selectedService]?.results?.result;
-                                              if (resultValue === 'Positive') {
+                                              if (['Hemoparasite Seen', 'Positive'].includes(resultValue)) {
                                                 const density = testResults[selectedService]?.results?.parasite_density || '';
-                                                let remark = 'Malaria parasite seen.';
+                                                let remark = 'Hemoparasite seen.';
                                                 if (newResults.species) remark += ` Species: ${newResults.species}.`;
                                                 if (density) remark += ` Parasite density: ${density}.`;
                                                 newResults.remark = remark;
@@ -2049,7 +2051,7 @@ const LabOrders = () => {
                                     ))}
                                   </div>
                                   {(!isSpeciesEnabled) && (
-                                    <p className="text-xs text-gray-500">Select "Positive" result to enable species selection</p>
+                                    <p className="text-xs text-gray-500">Select "Hemoparasite Seen" result to enable species selection</p>
                                   )}
                                 </div>
                               );
@@ -2087,17 +2089,16 @@ const LabOrders = () => {
                                         testResults[selectedService]?.labTest?.name?.toLowerCase().includes('malaria'));
 
                                     if (isMalariaResult) {
-                                      // Clear species and density if result is Negative
-                                      if (e.target.value === 'Negative') {
+                                      // Clear species and density if result is negative/no hemoparasite
+                                      if (['Negative', 'No Hemoparasite seen'].includes(e.target.value)) {
                                         newResults.species = '';
                                         newResults.parasite_density = '';
-                                        // Auto-fill remark with negative message
-                                        newResults.remark = 'No malaria parasite seen.';
-                                      } else if (e.target.value === 'Positive') {
+                                        newResults.remark = 'No Hemoparasite seen.';
+                                      } else if (['Positive', 'Hemoparasite Seen'].includes(e.target.value)) {
                                         // Auto-fill remark with positive message (species will be added if selected)
                                         const species = newResults.species || '';
                                         const density = newResults.parasite_density || '';
-                                        let remark = 'Malaria parasite seen.';
+                                        let remark = 'Hemoparasite seen.';
                                         if (species) remark += ` Species: ${species}.`;
                                         if (density) remark += ` Parasite density: ${density}.`;
                                         newResults.remark = remark;
@@ -2172,15 +2173,15 @@ const LabOrders = () => {
                                   const malariaResult = testResults[selectedService]?.results?.result;
 
                                   if (isMalariaRemark && !e.target.value && malariaResult) {
-                                    if (malariaResult === 'Negative') {
+                                    if (['Negative', 'No Hemoparasite seen'].includes(malariaResult)) {
                                       updateTestResult(selectedService, 'results', {
                                         ...testResults[selectedService].results,
-                                        remark: 'No malaria parasite seen.'
+                                        remark: 'No Hemoparasite seen.'
                                       });
-                                    } else if (malariaResult === 'Positive') {
+                                    } else if (['Positive', 'Hemoparasite Seen'].includes(malariaResult)) {
                                       const species = testResults[selectedService]?.results?.species || '';
                                       const density = testResults[selectedService]?.results?.parasite_density || '';
-                                      let remark = 'Malaria parasite seen.';
+                                      let remark = 'Hemoparasite seen.';
                                       if (species) remark += ` Species: ${species}.`;
                                       if (density) remark += ` Parasite density: ${density}.`;
                                       updateTestResult(selectedService, 'results', {
