@@ -1,13 +1,13 @@
 // Note: Prisma client will be passed as parameter to avoid multiple instances
 
 /**
- * Generate a unique visitUid with random 3-digit suffix
- * Format: VISIT-YYMMDD-RND
+ * Generate a unique visitUid with auto-expanding numeric suffix
+ * Format: VISIT-YYMMDD-N
  *
  * Uses:
  * - Date (YYMMDD) for date-based grouping
- * - Random 3-digit suffix (001-999)
- * - Existence checks + fallback pool selection for high-concurrency safety
+ * - Numeric suffix starts at 001 and auto-expands beyond 999 (1000, 1001, ...)
+ * - Retry-safe creation is handled by generateUniqueVisitUid on unique collisions
  * 
  * @param {Object} prisma - Prisma client instance
  * @returns {Promise<string>} A unique visitUid
@@ -19,24 +19,6 @@ async function generateVisitUid(prisma) {
   const day = now.getDate().toString().padStart(2, '0');
   const dateStr = `${year}${month}${day}`; // YYMMDD
 
-  const buildVisitUid = (num) => `VISIT-${dateStr}-${String(num).padStart(3, '0')}`;
-
-  // Fast random attempts first to avoid scanning daily rows on each request.
-  for (let i = 0; i < 25; i++) {
-    const randomNum = Math.floor(Math.random() * 999) + 1; // 1..999
-    const candidateUid = buildVisitUid(randomNum);
-
-    const existing = await prisma.visit.findUnique({
-      where: { visitUid: candidateUid },
-      select: { id: true }
-    });
-
-    if (!existing) {
-      return candidateUid;
-    }
-  }
-
-  // Fallback: deterministically choose from the remaining suffix pool for the day.
   const existingVisits = await prisma.visit.findMany({
     where: {
       visitUid: {
@@ -46,30 +28,22 @@ async function generateVisitUid(prisma) {
     select: { visitUid: true }
   });
 
-  const usedSuffixes = new Set(
-    existingVisits
-      .map(v => {
-        const parts = v.visitUid.split('-');
-        if (parts.length !== 3 || parts[0] !== 'VISIT' || parts[1] !== dateStr) return null;
-        const parsed = parseInt(parts[2], 10);
-        return Number.isInteger(parsed) && parsed >= 1 && parsed <= 999 ? parsed : null;
-      })
-      .filter(Boolean)
-  );
-
-  const available = [];
-  for (let n = 1; n <= 999; n++) {
-    if (!usedSuffixes.has(n)) {
-      available.push(n);
+  let maxSuffix = 0;
+  for (const row of existingVisits) {
+    const parts = row.visitUid.split('-');
+    if (parts.length !== 3 || parts[0] !== 'VISIT' || parts[1] !== dateStr) continue;
+    const parsed = parseInt(parts[2], 10);
+    if (Number.isInteger(parsed) && parsed > maxSuffix) {
+      maxSuffix = parsed;
     }
   }
 
-  if (available.length === 0) {
-    throw new Error('Daily visit ID capacity exhausted for today (001-999).');
-  }
+  const nextSuffix = maxSuffix + 1;
+  const suffixStr = nextSuffix < 1000
+    ? String(nextSuffix).padStart(3, '0')
+    : String(nextSuffix);
 
-  const chosen = available[Math.floor(Math.random() * available.length)];
-  return buildVisitUid(chosen);
+  return `VISIT-${dateStr}-${suffixStr}`;
 }
 
 /**
