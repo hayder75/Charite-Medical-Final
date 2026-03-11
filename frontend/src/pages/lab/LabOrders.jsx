@@ -1837,10 +1837,10 @@ const LabOrders = () => {
                         ['mcv', 'mch', 'mchc'].includes(field.fieldName);
                       const shouldShowCBCAdditional = !isCBCAdditional || showCBCAdditionalFields[selectedService];
 
-                      // HIV: Hide remarks field if result is not "Reactive"
+                      // HIV: Hide remarks field unless result is Positive/Reactive
                       const isHIVRemarks = result.labTest?.code === 'HIV001' && field.fieldName === 'remarks';
                       const hivResult = result.results?.result;
-                      const shouldShowHIVRemarks = !isHIVRemarks || hivResult === 'Reactive';
+                      const shouldShowHIVRemarks = !isHIVRemarks || ['Reactive', 'Positive'].includes(hivResult);
 
                       // Don't render if field should be hidden
                       if (isCBCAdditional && !shouldShowCBCAdditional) {
@@ -1951,10 +1951,10 @@ const LabOrders = () => {
                                       newResults.parasite_type = '';
                                     }
 
-                                    // Special handling for HIV: Clear remarks if result is not "Reactive"
+                                    // Special handling for HIV: Clear remarks if result is not Positive/Reactive
                                     const isHIVResult = field.fieldName === 'result' &&
                                       testResults[selectedService]?.labTest?.code === 'HIV001';
-                                    if (isHIVResult && e.target.value !== 'Reactive') {
+                                    if (isHIVResult && !['Reactive', 'Positive'].includes(e.target.value)) {
                                       newResults.remarks = '';
                                     }
 
@@ -2113,11 +2113,11 @@ const LabOrders = () => {
                                       newResults.parasite_type = '';
                                     }
 
-                                    // Special handling for HIV: Clear remarks if result is not "Reactive"
+                                    // Special handling for HIV: Clear remarks if result is not Positive/Reactive
                                     const isHIVResult = field.fieldName === 'result' &&
                                       testResults[selectedService]?.labTest?.code === 'HIV001';
 
-                                    if (isHIVResult && e.target.value !== 'Reactive') {
+                                    if (isHIVResult && !['Reactive', 'Positive'].includes(e.target.value)) {
                                       newResults.remarks = '';
                                     }
 
@@ -2138,11 +2138,11 @@ const LabOrders = () => {
                                 value={fieldValue}
                                 readOnly={isCompleted}
                                 disabled={(() => {
-                                  // HIV: Disable remarks if result is not "Reactive"
+                                  // HIV: Disable remarks unless result is Positive/Reactive
                                   const isHIVRemarks = field.fieldName === 'remarks' &&
                                     testResults[selectedService]?.labTest?.code === 'HIV001';
                                   const hivResult = testResults[selectedService]?.results?.result;
-                                  return isHIVRemarks && hivResult !== 'Reactive';
+                                  return isHIVRemarks && !['Reactive', 'Positive'].includes(hivResult);
                                 })()}
                                 onChange={(e) => {
                                   if (isCompleted) return;
@@ -2192,7 +2192,7 @@ const LabOrders = () => {
                                 }}
                                 className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${isCompleted || (field.fieldName === 'remarks' &&
                                   testResults[selectedService]?.labTest?.code === 'HIV001' &&
-                                  testResults[selectedService]?.results?.result !== 'Reactive')
+                                  !['Reactive', 'Positive'].includes(testResults[selectedService]?.results?.result))
                                   ? 'bg-gray-100 cursor-not-allowed' : ''
                                   }`}
                                 rows={3}
