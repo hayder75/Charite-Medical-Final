@@ -435,7 +435,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
         dosageForm: med.dosageForm || 'Tablet',
         strength: med.strength || 'N/A',
         strengthText: med.strengthText || null,
-        instructionText: med.instructionText || med.instructions || null,
+        instructionText: med.instructions || med.instructionText || null,
         additionalNotes: med.isCustom ? 'Custom medication - not in inventory' : '',
         category: med.category || 'TABLETS'
       }));
@@ -479,7 +479,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
         : [
             current.name || '',
             current.strength || '',
-            current.instructionText || current.instructions || ''
+            current.instructions || current.instructionText || ''
           ].join('|');
 
       const isDuplicate = acc.some(item => {
@@ -488,7 +488,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
           : [
               item.name || '',
               item.strength || '',
-              item.instructionText || item.instructions || ''
+              item.instructions || item.instructionText || ''
             ].join('|');
         return itemKey === key;
       });
@@ -599,7 +599,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, idx) => {
         const cleanedName = (med.name || '').toUpperCase();
-        const instructionText = med.instructionText || med.instructions || '';
+        const instructionText = med.instructions || med.instructionText || '';
 
         return `
                 <div class="medication-item">
@@ -882,9 +882,9 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <div key={idx} className="p-3 bg-gray-50 border rounded-lg flex justify-between items-center">
                 <div className="flex-1">
                   <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.name)}</p>
-                  {order.instructionText && (
+                  {(order.instructions || order.instructionText) && (
                     <p className="text-xs text-gray-600 ml-4 italic">
-                      {order.instructionText}
+                      {order.instructions || order.instructionText}
                     </p>
                   )}
                 </div>
@@ -946,7 +946,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
                   <textarea
-                    value={editingOrder.instructionText || editingOrder.instructions || ''}
+                    value={editingOrder.instructions || editingOrder.instructionText || ''}
                     onChange={(e) => setEditingOrder({
                       ...editingOrder,
                       instructionText: e.target.value,
