@@ -15,16 +15,20 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
   const [diagnosisNotes, setDiagnosisNotes] = useState('');
   const [visitOutcome, setVisitOutcome] = useState('');
   const [diseaseSearchInput, setDiseaseSearchInput] = useState('');
+  const [isSearchingDiseases, setIsSearchingDiseases] = useState(false);
   const [isAddingDiagnosis, setIsAddingDiagnosis] = useState(false);
   const [isDeletingDiagnosisId, setIsDeletingDiagnosisId] = useState(null);
+  const diseaseSearchCacheRef = useRef(new Map());
 
   const diseaseSelectStyles = {
     control: (base, state) => ({
       ...base,
-      minHeight: 42,
+      minHeight: 46,
       borderColor: state.isFocused ? '#3B82F6' : '#D1D5DB',
-      boxShadow: state.isFocused ? '0 0 0 1px #3B82F6' : 'none',
-      backgroundColor: '#FFFFFF'
+      boxShadow: state.isFocused ? '0 0 0 2px #DBEAFE' : 'none',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 12,
+      transition: 'all 120ms ease'
     }),
     singleValue: (base) => ({
       ...base,
@@ -41,7 +45,15 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
     }),
     menu: (base) => ({
       ...base,
-      zIndex: 30
+      zIndex: 30,
+      borderRadius: 12,
+      overflow: 'hidden'
+    }),
+    option: (base, state) => ({
+      ...base,
+      backgroundColor: state.isFocused ? '#EFF6FF' : '#FFFFFF',
+      color: '#0F172A',
+      cursor: 'pointer'
     })
   };
 
@@ -150,15 +162,7 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
 
   // --- Structured Diagnosis Handlers ---
 
-  const loadDiseaseOptions = (inputValue) => {
-    if (!inputValue) return Promise.resolve([]);
-    return api.get(`/diseases/search?query=${inputValue}`)
-      .then(res => res.data.map(d => ({
-        label: `${d.name} (${d.code})`,
-        value: d.id,
-        ...d
-      })));
-  };
+  const normalizeQuery = (value) => String(value || '').trim().toLowerCase();
 
   const createCustomDiseaseOption = (inputValue) => {
     const name = String(inputValue || '').trim();
@@ -171,6 +175,51 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
       code: 'CUSTOM',
       isCustom: true
     };
+  };
+
+  const rankDiseaseMatches = (items, rawQuery) => {
+    const q = normalizeQuery(rawQuery);
+    return [...items].sort((a, b) => {
+      const aName = normalizeQuery(a.name);
+      const bName = normalizeQuery(b.name);
+      const aCode = normalizeQuery(a.code);
+      const bCode = normalizeQuery(b.code);
+
+      const aStarts = aName.startsWith(q) || aCode.startsWith(q);
+      const bStarts = bName.startsWith(q) || bCode.startsWith(q);
+      if (aStarts !== bStarts) return aStarts ? -1 : 1;
+
+      const aContains = aName.includes(q) || aCode.includes(q);
+      const bContains = bName.includes(q) || bCode.includes(q);
+      if (aContains !== bContains) return aContains ? -1 : 1;
+
+      return aName.localeCompare(bName);
+    });
+  };
+
+  const loadDiseaseOptions = async (inputValue) => {
+    const query = String(inputValue || '').trim();
+    if (!query) return [];
+
+    const cacheKey = normalizeQuery(query);
+    if (diseaseSearchCacheRef.current.has(cacheKey)) {
+      return diseaseSearchCacheRef.current.get(cacheKey);
+    }
+
+    setIsSearchingDiseases(true);
+    try {
+      const res = await api.get(`/diseases/search?query=${encodeURIComponent(query)}`);
+      const ranked = rankDiseaseMatches(res.data || [], query);
+      const mapped = ranked.map((d) => ({
+        label: `${d.name} (${d.code})`,
+        value: d.id,
+        ...d
+      }));
+      diseaseSearchCacheRef.current.set(cacheKey, mapped);
+      return mapped;
+    } finally {
+      setIsSearchingDiseases(false);
+    }
   };
 
   const handleDiseaseSelection = (option) => {
@@ -282,9 +331,17 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
                   loadOptions={loadDiseaseOptions}
                   defaultOptions
                   styles={diseaseSelectStyles}
+                  isLoading={isSearchingDiseases}
                   value={selectedDisease}
                   onChange={handleDiseaseSelection}
                   inputValue={diseaseSearchInput}
+                  components={{ DropdownIndicator: null, IndicatorSeparator: null }}
+                  formatCreateLabel={(inputValue) => `Use "${inputValue}" as custom disease`}
+                  noOptionsMessage={() => {
+                    if (!diseaseSearchInput) return 'Type to search diseases';
+                    if (isSearchingDiseases) return 'Searching...';
+                    return 'No disease found';
+                  }}
                   onInputChange={(value, actionMeta) => {
                     if (actionMeta.action === 'input-change') {
                       setDiseaseSearchInput(value);
@@ -293,12 +350,9 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
                   }}
                   onCreateOption={(inputValue) => {
                     const option = createCustomDiseaseOption(inputValue);
-                    if (option) {
-                      handleDiseaseSelection(option);
-                    }
+                    if (option) handleDiseaseSelection(option);
                   }}
-                  formatCreateLabel={(inputValue) => `Use "${inputValue}" as custom disease`}
-                  placeholder="Type to search diseases (e.g. Malaria, Typhoid)..."
+                  placeholder="Type disease name/code (e.g. Malaria, A00)..."
                   className="react-select-container"
                   classNamePrefix="react-select"
                 />
@@ -311,14 +365,28 @@ const DiagnosisNotes = ({ visitId, patientId, patientName, onSave }) => {
                     toast.error('Type a disease name first');
                     return;
                   }
-
                   handleDiseaseSelection(option);
                 }}
-                className="px-3 py-2 text-sm bg-purple-100 text-purple-700 rounded hover:bg-purple-200 whitespace-nowrap"
+                className="px-3 py-2 text-sm bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 whitespace-nowrap"
               >
                 + Custom
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDisease(null);
+                  setDiseaseSearchInput('');
+                }}
+                className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 whitespace-nowrap"
+              >
+                Clear
+              </button>
             </div>
+            {selectedDisease && (
+              <p className="mt-2 text-xs text-blue-700 font-medium">
+                Selected: {selectedDisease.label}
+              </p>
+            )}
           </div>
 
           <div>

@@ -509,7 +509,7 @@ const ProcedureOrdering = ({ visit, onOrdersPlaced }) => {
                                         <input
                                             type="number"
                                             min="1"
-                                            className="w-16 text-sm border border-gray-300 rounded px-2 py-1 text-center outline-none focus:ring-1 focus:ring-indigo-500"
+                                            className="w-20 text-sm border-2 border-indigo-300 rounded-lg px-2 py-2 text-center outline-none focus:ring-2 focus:ring-indigo-500 font-semibold text-indigo-900 bg-white"
                                             value={quantities[service.id] || 1}
                                             onChange={(e) => updateQuantity(service.id, e.target.value)}
                                         />
