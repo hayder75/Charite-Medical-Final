@@ -474,14 +474,25 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
     }
 
     medicationsToPrint = medicationsToPrint.reduce((acc, current) => {
-      const isDuplicate = acc.find(item =>
-        item.name === current.name &&
-        item.strength === current.strength &&
-        item.frequency === current.frequency &&
-        item.frequencyPeriod === current.frequencyPeriod &&
-        item.route === current.route &&
-        item.duration === current.duration
-      );
+      const key = current.id
+        ? `id:${current.id}`
+        : [
+            current.name || '',
+            current.strength || '',
+            current.instructionText || current.instructions || ''
+          ].join('|');
+
+      const isDuplicate = acc.some(item => {
+        const itemKey = item.id
+          ? `id:${item.id}`
+          : [
+              item.name || '',
+              item.strength || '',
+              item.instructionText || item.instructions || ''
+            ].join('|');
+        return itemKey === key;
+      });
+
       if (!isDuplicate) acc.push(current);
       return acc;
     }, []);
