@@ -177,7 +177,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
         return `
           <div class="medication-item" style="page-break-inside: avoid;">
             <div class="medication-name">
-              #${idx + 1}. Compound Prescription ${prescription.referenceNumber ? `(${prescription.referenceNumber})` : ''}
+              #${idx + 1}
             </div>
             <div class="medication-details">
               ${parsedText}
@@ -245,8 +245,10 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
                 <div><span>Prescriptions:</span> ${existingPrescriptions.length}</div>
               </div>
 
-              <div class="external-warning">
-                ⚠ FOR EXTERNAL USE ONLY
+              <div class="medications-section">
+                <h3 style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 2px;">
+                  Compound Prescription
+                </h3>
               </div>
 
               ${prescriptionsHtml}
