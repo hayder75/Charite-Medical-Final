@@ -1142,7 +1142,7 @@ const LabOrders = () => {
 
   const handleCloseServiceTemplate = async () => {
     // Auto-save the current form data to database if it has results
-    if (selectedService && testResults[selectedService] && selectedOrder) {
+    if (selectedService && testResults[selectedService] && selectedOrder && selectedOrder.status !== 'COMPLETED') {
       const result = testResults[selectedService];
       const hasResults = Object.values(result.results || {}).some(value => value && value.toString().trim() !== '') ||
         (result.additionalNotes && result.additionalNotes.trim() !== '');
@@ -1153,15 +1153,16 @@ const LabOrders = () => {
           const isNewSystem = result.labTestId && result.orderId;
 
           if (isNewSystem) {
-            // NEW SYSTEM: Save using lab test result endpoint
+            // NEW SYSTEM: Save as draft only; do not mark completed until explicit Complete All Tests
             await api.post('/labs/results/lab-test', {
               orderId: result.orderId,
               labTestId: result.labTestId,
               results: result.results || {},
-              additionalNotes: result.additionalNotes || ''
+              additionalNotes: result.additionalNotes || '',
+              finalize: false
             });
 
-            toast.success('Lab test result saved successfully');
+            toast.success('Draft saved');
           } else {
             // OLD SYSTEM: Save using individual result endpoint
             const labOrderId = selectedOrder.isWalkIn
@@ -1180,17 +1181,8 @@ const LabOrders = () => {
               additionalNotes: result.additionalNotes || ''
             });
 
-            toast.success('Results saved successfully');
+            toast.success('Results saved');
           }
-
-          // Update the result in state to mark it as saved
-          setTestResults(prev => ({
-            ...prev,
-            [selectedService]: {
-              ...prev[selectedService],
-              completed: true
-            }
-          }));
 
         } catch (error) {
           console.error('Error saving result:', error);
@@ -1304,27 +1296,31 @@ const LabOrders = () => {
       const isWalkIn = selectedOrder.isWalkIn;
 
       if (isNewLabTestOrder) {
-        // NEW SYSTEM: Save each lab test order result
+        // NEW SYSTEM: Finalize each lab test order result in one explicit action
+        const finalizedResults = {};
         for (const [orderId, result] of Object.entries(testResults)) {
-          if (!result.completed && result.orderId) {
+          if (result.orderId) {
             try {
               await api.post('/labs/results/lab-test', {
                 orderId: result.orderId,
                 labTestId: result.labTestId,
                 results: result.results || {},
-                additionalNotes: result.additionalNotes || ''
+                additionalNotes: result.additionalNotes || '',
+                finalize: true
               });
-
-              // Mark as completed in state
-              setTestResults(prev => ({
-                ...prev,
-                [orderId]: { ...prev[orderId], completed: true }
-              }));
+              finalizedResults[orderId] = {
+                ...result,
+                completed: true
+              };
             } catch (error) {
               console.error('Error saving lab test result:', error);
               throw new Error(`Failed to save result for ${result.serviceName || result.labTest?.name}: ${error.response?.data?.error || error.message}`);
             }
           }
+        }
+
+        if (Object.keys(finalizedResults).length > 0) {
+          setTestResults(finalizedResults);
         }
 
         // Update all orders to completed and send to doctor if not walk-in
@@ -1387,14 +1383,12 @@ const LabOrders = () => {
         }
       }
 
-      // Refresh orders but keep the form open if there are more services to complete
-      // Only close if all services are completed
-      const allCompleted = Object.values(testResults).every(r => r.completed);
-      if (allCompleted) {
-        setShowTemplateForm(false);
-        setSelectedOrder(null);
-        setTestResults({});
-      }
+      // Completion is explicit here, so close immediately on success.
+      setShowTemplateForm(false);
+      setSelectedOrder(null);
+      setSelectedService(null);
+      setShowServiceTemplate(false);
+      setTestResults({});
       fetchOrders();
     } catch (error) {
       console.error('Error completing batch order:', error);

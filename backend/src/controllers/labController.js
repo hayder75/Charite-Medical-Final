@@ -379,7 +379,16 @@ exports.getLabReports = async (req, res) => {
         labTest: true,
         patient: { select: { id: true, name: true, gender: true, dob: true } },
         doctor: { select: { id: true, fullname: true } },
-        results: { where: technicianId ? { processedBy: technicianId } : {} }
+        results: {
+          where: technicianId
+            ? {
+                OR: [
+                  { processedBy: technicianId },
+                  { verifiedBy: technicianId }
+                ]
+              }
+            : {}
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -389,32 +398,48 @@ exports.getLabReports = async (req, res) => {
       include: {
         patient: { select: { id: true, name: true, gender: true, dob: true } },
         doctor: { select: { id: true, fullname: true } },
-        services: { include: { investigationType: true } }
+        services: { include: { investigationType: true } },
+        detailedResults: {
+          where: technicianId ? { verifiedBy: technicianId } : {},
+          select: {
+            serviceId: true,
+            verifiedBy: true,
+            verifiedAt: true,
+            status: true
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
 
     const users = await prisma.user.findMany({ where: { role: 'LAB_TECHNICIAN' }, select: { id: true, fullname: true, username: true } });
     const userMap = {};
-    users.forEach(u => { userMap[u.id] = u.fullname; });
+    users.forEach(u => { userMap[u.id] = u.fullname || u.username || 'Unknown'; });
 
     const processedTestOrders = labTestOrders.map(order => {
-      const processedBy = order.results[0]?.processedBy;
+      const processedById = order.results[0]?.processedBy || order.results[0]?.verifiedBy;
       return {
         id: order.id, type: 'LAB_TEST', testName: order.labTest?.name || 'Unknown Test', testCategory: order.labTest?.category || 'General',
         patientId: order.patientId, patientName: order.patient?.name, doctorName: order.doctor?.fullname || 'Walk-in',
-        status: order.status, isWalkIn: order.isWalkIn, processedBy: processedBy ? userMap[processedBy] || 'Unknown' : null,
+        status: order.status, isWalkIn: order.isWalkIn, processedBy: processedById ? userMap[processedById] || 'Unknown' : null,
         createdAt: order.createdAt, completedAt: order.results[0]?.verifiedAt || null
       };
     });
 
     const processedBatchOrders = batchOrders.map(order => {
-      return (order.services || []).map(service => ({
-        id: `${order.id}-${service.id}`, type: 'BATCH_ORDER', testName: service.investigationType?.name || 'Unknown Test',
-        testCategory: service.investigationType?.category || 'General', patientId: order.patientId, patientName: order.patient?.name,
-        doctorName: order.doctor?.fullname || 'Unknown', status: order.status, isWalkIn: !!order.isWalkIn, processedBy: null,
-        createdAt: order.createdAt, completedAt: order.status === 'COMPLETED' ? order.updatedAt : null
-      }));
+      return (order.services || []).map(service => {
+        const matchingDetailedResult = (order.detailedResults || []).find((result) => result.serviceId === service.id) || order.detailedResults?.[0] || null;
+        const processedById = matchingDetailedResult?.verifiedBy || null;
+        const status = matchingDetailedResult?.status || service.status || order.status;
+
+        return {
+          id: `${order.id}-${service.id}`, type: 'BATCH_ORDER', testName: service.investigationType?.name || 'Unknown Test',
+          testCategory: service.investigationType?.category || 'General', patientId: order.patientId, patientName: order.patient?.name,
+          doctorName: order.doctor?.fullname || 'Unknown', status, isWalkIn: !!order.isWalkIn,
+          processedBy: processedById ? userMap[processedById] || 'Unknown' : null,
+          createdAt: order.createdAt, completedAt: matchingDetailedResult?.verifiedAt || (status === 'COMPLETED' ? order.updatedAt : null)
+        };
+      });
     }).flat();
 
     const allTests = [...processedTestOrders, ...processedBatchOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -932,7 +957,16 @@ const getLabReports = async (req, res) => {
         labTest: true,
         patient: { select: { id: true, name: true, gender: true, dob: true } },
         doctor: { select: { id: true, fullname: true } },
-        results: { where: technicianId ? { processedBy: technicianId } : {} }
+        results: {
+          where: technicianId
+            ? {
+                OR: [
+                  { processedBy: technicianId },
+                  { verifiedBy: technicianId }
+                ]
+              }
+            : {}
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -942,17 +976,26 @@ const getLabReports = async (req, res) => {
       include: {
         patient: { select: { id: true, name: true, gender: true, dob: true } },
         doctor: { select: { id: true, fullname: true } },
-        services: { include: { investigationType: true } }
+        services: { include: { investigationType: true } },
+        detailedResults: {
+          where: technicianId ? { verifiedBy: technicianId } : {},
+          select: {
+            serviceId: true,
+            verifiedBy: true,
+            verifiedAt: true,
+            status: true
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
 
     const users = await prisma.user.findMany({ where: { role: 'LAB_TECHNICIAN' }, select: { id: true, fullname: true, username: true } });
     const userMap = {};
-    users.forEach(u => { userMap[u.id] = u.fullname; });
+    users.forEach(u => { userMap[u.id] = u.fullname || u.username || 'Unknown'; });
 
     const processedTestOrders = labTestOrders.map(order => {
-      const processedBy = order.results[0]?.processedBy;
+      const processedBy = order.results[0]?.processedBy || order.results[0]?.verifiedBy;
       return {
         id: order.id, type: 'LAB_TEST', testName: order.labTest?.name || 'Unknown Test', testCategory: order.labTest?.category || 'General',
         patientId: order.patientId, patientName: order.patient?.name, doctorName: order.doctor?.fullname || 'Walk-in',
@@ -962,12 +1005,19 @@ const getLabReports = async (req, res) => {
     });
 
     const processedBatchOrders = batchOrders.map(order => {
-      return (order.services || []).map(service => ({
-        id: `${order.id}-${service.id}`, type: 'BATCH_ORDER', testName: service.investigationType?.name || 'Unknown Test',
-        testCategory: service.investigationType?.category || 'General', patientId: order.patientId, patientName: order.patient?.name,
-        doctorName: order.doctor?.fullname || 'Unknown', status: order.status, isWalkIn: !!order.isWalkIn, processedBy: null,
-        createdAt: order.createdAt, completedAt: order.status === 'COMPLETED' ? order.updatedAt : null
-      }));
+      return (order.services || []).map(service => {
+        const matchingDetailedResult = (order.detailedResults || []).find((result) => result.serviceId === service.id) || order.detailedResults?.[0] || null;
+        const processedBy = matchingDetailedResult?.verifiedBy || null;
+        const status = matchingDetailedResult?.status || service.status || order.status;
+
+        return {
+          id: `${order.id}-${service.id}`, type: 'BATCH_ORDER', testName: service.investigationType?.name || 'Unknown Test',
+          testCategory: service.investigationType?.category || 'General', patientId: order.patientId, patientName: order.patient?.name,
+          doctorName: order.doctor?.fullname || 'Unknown', status, isWalkIn: !!order.isWalkIn,
+          processedBy: processedBy ? userMap[processedBy] || 'Unknown' : null,
+          createdAt: order.createdAt, completedAt: matchingDetailedResult?.verifiedAt || (status === 'COMPLETED' ? order.updatedAt : null)
+        };
+      });
     }).flat();
 
     const allTests = [...processedTestOrders, ...processedBatchOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -1066,8 +1116,9 @@ const getLabReports = async (req, res) => {
 
 const saveLabTestResult = async (req, res) => {
   try {
-    const { orderId, labTestId, results, additionalNotes } = req.body;
+    const { orderId, labTestId, results, additionalNotes, finalize = true } = req.body;
     const labTechnicianId = req.user.id;
+    const requestedFinalize = !(finalize === false || finalize === 'false');
 
     if (!orderId) {
       return res.status(400).json({ error: 'orderId is required' });
@@ -1082,6 +1133,9 @@ const saveLabTestResult = async (req, res) => {
       where: { orderId_testId: { orderId, testId: order.labTestId } }
     });
 
+    const shouldFinalize = requestedFinalize || existingResult?.status === 'COMPLETED';
+    const targetStatus = shouldFinalize ? 'COMPLETED' : 'IN_PROGRESS';
+
     let result;
     if (existingResult) {
       result = await prisma.labTestResult.update({
@@ -1090,9 +1144,9 @@ const saveLabTestResult = async (req, res) => {
           results: results,
           additionalNotes: additionalNotes || null,
           processedBy: labTechnicianId,
-          verifiedBy: labTechnicianId,
-          verifiedAt: new Date(),
-          status: 'COMPLETED'
+          verifiedBy: shouldFinalize ? labTechnicianId : null,
+          verifiedAt: shouldFinalize ? new Date() : null,
+          status: targetStatus
         },
         include: { test: { include: { resultFields: true } } }
       });
@@ -1104,21 +1158,25 @@ const saveLabTestResult = async (req, res) => {
           results: results,
           additionalNotes: additionalNotes || null,
           processedBy: labTechnicianId,
-          verifiedBy: labTechnicianId,
-          verifiedAt: new Date(),
-          status: 'COMPLETED'
+          verifiedBy: shouldFinalize ? labTechnicianId : null,
+          verifiedAt: shouldFinalize ? new Date() : null,
+          status: targetStatus
         },
         include: { test: { include: { resultFields: true } } }
       });
     }
 
-    await prisma.labTestOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
+    if (shouldFinalize) {
+      await prisma.labTestOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
 
-    if (order.visitId) {
-      await checkAndUpdateVisitStatus(order.visitId);
+      if (order.visitId) {
+        await checkAndUpdateVisitStatus(order.visitId);
+      }
+    } else if (order.status !== 'COMPLETED') {
+      await prisma.labTestOrder.update({ where: { id: orderId }, data: { status: 'IN_PROGRESS' } });
     }
 
-    res.json({ success: true, result });
+    res.json({ success: true, result, finalized: shouldFinalize });
   } catch (error) {
     console.error('Error saving lab test result:', error);
     res.status(500).json({ error: error.message });

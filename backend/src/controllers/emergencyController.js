@@ -9,6 +9,9 @@ exports.createEmergencyDrugOrder = async (req, res) => {
       visitId,
       patientId,
       serviceId,
+      customName,
+      customStrength,
+      customUnitPrice,
       quantity,
       instructions,
       notes,
@@ -22,21 +25,71 @@ exports.createEmergencyDrugOrder = async (req, res) => {
     } = req.body;
     const doctorId = req.user.id;
 
-    if (!patientId || !serviceId) {
-      return res.status(400).json({ error: 'Patient ID and Service ID are required' });
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID is required' });
     }
 
-    // Validate service is EMERGENCY_DRUG category
-    const service = await prisma.service.findUnique({
-      where: { id: serviceId }
-    });
+    const parsedQuantity = Math.max(1, parseInt(quantity, 10) || 1);
 
-    if (!service) {
-      return res.status(404).json({ error: 'Service not found' });
-    }
+    let service = null;
+    if (serviceId) {
+      // Validate service is EMERGENCY_DRUG category
+      service = await prisma.service.findUnique({
+        where: { id: serviceId }
+      });
 
-    if (service.category !== 'EMERGENCY_DRUG') {
-      return res.status(400).json({ error: 'Service must be EMERGENCY_DRUG category' });
+      if (!service) {
+        return res.status(404).json({ error: 'Service not found' });
+      }
+
+      if (service.category !== 'EMERGENCY_DRUG') {
+        return res.status(400).json({ error: 'Service must be EMERGENCY_DRUG category' });
+      }
+    } else {
+      const trimmedCustomName = (customName || '').trim();
+      if (!trimmedCustomName) {
+        return res.status(400).json({ error: 'Either serviceId or customName is required' });
+      }
+
+      const normalizedStrength = (customStrength || strength || '').trim();
+      const customServiceName = normalizedStrength
+        ? `${trimmedCustomName} ${normalizedStrength}`
+        : trimmedCustomName;
+
+      const parsedCustomPrice = Number(customUnitPrice);
+      const unitPrice = Number.isFinite(parsedCustomPrice) && parsedCustomPrice > 0
+        ? parsedCustomPrice
+        : 5;
+
+      service = await prisma.service.findFirst({
+        where: {
+          category: 'EMERGENCY_DRUG',
+          name: {
+            equals: customServiceName,
+            mode: 'insensitive'
+          }
+        }
+      });
+
+      if (!service) {
+        const safeCodeBase = trimmedCustomName
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .slice(0, 12) || 'CUSTOM';
+        const generatedCode = `EM-CUSTOM-${safeCodeBase}-${Date.now().toString().slice(-6)}`;
+
+        service = await prisma.service.create({
+          data: {
+            code: generatedCode,
+            name: customServiceName,
+            category: 'EMERGENCY_DRUG',
+            price: unitPrice,
+            isActive: true,
+            description: 'Custom emergency medication created by doctor'
+          }
+        });
+      }
     }
 
     // Validate visit if provided
@@ -55,12 +108,12 @@ exports.createEmergencyDrugOrder = async (req, res) => {
         visitId: visitId || null,
         patientId,
         doctorId,
-        serviceId,
-        quantity: quantity || 1,
+        serviceId: service.id,
+        quantity: parsedQuantity,
         instructions,
         notes,
         dosageForm,
-        strength,
+        strength: strength || customStrength || null,
         frequency,
         frequencyPeriod,
         duration,
@@ -97,7 +150,7 @@ exports.createEmergencyDrugOrder = async (req, res) => {
     });
 
     // Check for existing PENDING billing for this visit/patient and add to it, or create new one
-    const totalAmount = service.price * (quantity || 1);
+    const totalAmount = service.price * parsedQuantity;
     let billing = await prisma.billing.findFirst({
       where: {
         patientId,
@@ -115,7 +168,7 @@ exports.createEmergencyDrugOrder = async (req, res) => {
         data: {
           billingId: billing.id,
           serviceId: service.id,
-          quantity: quantity || 1,
+          quantity: parsedQuantity,
           unitPrice: service.price,
           totalPrice: totalAmount
         }
@@ -150,7 +203,7 @@ exports.createEmergencyDrugOrder = async (req, res) => {
           services: {
             create: {
               serviceId: service.id,
-              quantity: quantity || 1,
+              quantity: parsedQuantity,
               unitPrice: service.price,
               totalPrice: totalAmount
             }
