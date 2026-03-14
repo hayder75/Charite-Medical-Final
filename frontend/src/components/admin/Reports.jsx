@@ -933,7 +933,7 @@ const Reports = () => {
       </div>
 
       {/* Financial Overview */}
-      <div className={`grid grid-cols-1 md:grid-cols-2 ${revenueType === 'billing' ? 'lg:grid-cols-6' : 'lg:grid-cols-4'} gap-6`}>
+      <div className={`grid ${revenueType === 'billing' ? 'grid-cols-2' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4'} gap-6`}>
         <div className="card">
           <div className="flex items-center">
             <div className="p-3 rounded-lg bg-green-100">
@@ -1140,7 +1140,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Billing Users</p>
-                  <p className="text-2xl font-semibold text-gray-900">{billingStats?.summary?.totalUsers || 0}</p>
+                  <p className="text-lg md:text-2xl font-semibold text-gray-900 break-words leading-tight">{billingStats?.summary?.totalUsers || 0}</p>
                 </div>
               </div>
             </div>
@@ -1152,7 +1152,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Lab Walk-in</p>
-                  <p className="text-2xl font-semibold text-gray-900">
+                  <p className="text-lg md:text-2xl font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(selectedBillingBreakdown.LAB_WALKIN || 0)}
                   </p>
                 </div>
@@ -1166,7 +1166,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Radiology Walk-in</p>
-                  <p className="text-2xl font-semibold text-gray-900">
+                  <p className="text-lg md:text-2xl font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(selectedBillingBreakdown.RADIOLOGY_WALKIN || 0)}
                   </p>
                 </div>
@@ -1180,7 +1180,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Nurse Walk-in</p>
-                  <p className="text-2xl font-semibold text-gray-900">
+                  <p className="text-lg md:text-2xl font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(selectedBillingBreakdown.NURSE_WALKIN || 0)}
                   </p>
                 </div>
@@ -1194,7 +1194,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Card Revenue</p>
-                  <p className="text-2xl font-semibold text-gray-900">
+                  <p className="text-lg md:text-2xl font-semibold text-gray-900 break-words leading-tight">
                     {formatCurrency(
                       (selectedBillingBreakdown.CARD_CREATED_GENERAL || 0) +
                       (selectedBillingBreakdown.CARD_CREATED_DERMATOLOGY || 0) +

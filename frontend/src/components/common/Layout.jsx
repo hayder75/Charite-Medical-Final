@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import AccountSettings from './AccountSettings';
 import SystemSettings from '../admin/SystemSettings';
+import api from '../../services/api';
+import toast from 'react-hot-toast';
 import {
   Menu,
   X,
@@ -41,6 +43,8 @@ const Layout = ({ children, title, subtitle }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showSystemSettings, setShowSystemSettings] = useState(false);
+  const [oldPatientModeEnabled, setOldPatientModeEnabled] = useState(false);
+  const [togglingOldPatientMode, setTogglingOldPatientMode] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -74,6 +78,41 @@ const Layout = ({ children, title, subtitle }) => {
       return location.pathname === '/' || location.pathname === '/admin' || location.pathname === '/nurse' || location.pathname === '/doctor';
     }
     return location.pathname.startsWith(href);
+  };
+
+  useEffect(() => {
+    if (user?.role !== 'ADMIN') return;
+
+    const fetchOldPatientMode = async () => {
+      try {
+        const response = await api.get('/admin/system-settings/oldPatientRegistrationMode');
+        const value = response.data?.setting?.value;
+        setOldPatientModeEnabled(String(value || 'false').toLowerCase() === 'true');
+      } catch (error) {
+        setOldPatientModeEnabled(false);
+      }
+    };
+
+    fetchOldPatientMode();
+  }, [user?.role]);
+
+  const toggleOldPatientMode = async () => {
+    if (togglingOldPatientMode) return;
+    try {
+      setTogglingOldPatientMode(true);
+      const nextValue = !oldPatientModeEnabled;
+      await api.put('/admin/system-settings/oldPatientRegistrationMode', {
+        value: nextValue,
+        description: 'Enable old-patient registration mode so billing can waive card registration fee during migration'
+      });
+      setOldPatientModeEnabled(nextValue);
+      toast.success(`Old patient mode ${nextValue ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error('Error toggling old patient mode:', error);
+      toast.error('Failed to update old patient mode');
+    } finally {
+      setTogglingOldPatientMode(false);
+    }
   };
 
   const getNavigationItems = () => {
@@ -111,6 +150,7 @@ const Layout = ({ children, title, subtitle }) => {
         return [
           ...baseItems,
           { name: 'Patient Queue', href: '/doctor/queue', icon: Stethoscope },
+          { name: 'Daily Work', href: '/doctor/daily-work', icon: Calendar },
           { name: 'Bed & Admissions', href: '/doctor/admissions', icon: Bed },
           { name: 'Patient History', href: '/doctor/history', icon: FileText },
           { name: 'Medical Certificate', href: '/doctor/medical-certificates', icon: FileCheck },
@@ -346,16 +386,27 @@ const Layout = ({ children, title, subtitle }) => {
 
             <div className="flex items-center space-x-4">
               {user?.role === 'ADMIN' && (
-                <button
-                  onClick={() => setShowSystemSettings(true)}
-                  className="p-2 rounded-md transition-colors"
-                  style={{ color: 'var(--dark)' }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--primary)'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                  title="System Settings"
-                >
-                  <Bell className="h-6 w-6" />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleOldPatientMode}
+                    disabled={togglingOldPatientMode}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${oldPatientModeEnabled ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-300 text-gray-800 hover:bg-gray-400'} ${togglingOldPatientMode ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    title="Old Patient Registration Mode"
+                  >
+                    Old Patient: {oldPatientModeEnabled ? 'ON' : 'OFF'}
+                  </button>
+                  <button
+                    onClick={() => setShowSystemSettings(true)}
+                    className="p-2 rounded-md transition-colors"
+                    style={{ color: 'var(--dark)' }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--primary)'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                    title="System Settings"
+                  >
+                    <Bell className="h-6 w-6" />
+                  </button>
+                </>
               )}
 
               <div className="relative">

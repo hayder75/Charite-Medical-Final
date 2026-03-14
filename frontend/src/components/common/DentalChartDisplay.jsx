@@ -8,15 +8,11 @@ const DentalChartDisplay = ({ patientId, visitId, showHistory = false }) => {
   const [loading, setLoading] = useState(true);
   const [selectedRecord, setSelectedRecord] = useState(null);
 
-  // FDI tooth numbering system (11-18, 21-28, 31-38, 41-48)
-  const toothNumbers = [
-    // Upper jaw (right to left)
-    18, 17, 16, 15, 14, 13, 12, 11,
-    21, 22, 23, 24, 25, 26, 27, 28,
-    // Lower jaw (left to right)
-    38, 37, 36, 35, 34, 33, 32, 31,
-    41, 42, 43, 44, 45, 46, 47, 48
-  ];
+  // FDI order with conventional dentist-view lower arch orientation
+  const permanentUpper = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
+  const permanentLower = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
+  const primaryUpper = [55, 54, 53, 52, 51, 61, 62, 63, 64, 65];
+  const primaryLower = [85, 84, 83, 82, 81, 71, 72, 73, 74, 75];
 
   const toothConditions = {
     HEALTHY: { color: '#10B981', label: 'Healthy', bgColor: 'bg-green-100' },
@@ -125,6 +121,12 @@ const DentalChartDisplay = ({ patientId, visitId, showHistory = false }) => {
       );
     }
 
+    const meta = record?.treatmentPlan || {};
+    const chartType = meta.chartType || 'PERMANENT';
+    const chartConfig = chartType === 'PRIMARY'
+      ? { upper: primaryUpper, lower: primaryLower, label: 'Primary Dentition' }
+      : { upper: permanentUpper, lower: permanentLower, label: chartType === 'MIXED' ? 'Mixed Dentition (Permanent shown)' : 'Permanent Dentition' };
+
     return (
       <div className="space-y-6">
         {/* Tooth Chart Grid */}
@@ -133,12 +135,13 @@ const DentalChartDisplay = ({ patientId, visitId, showHistory = false }) => {
             <Circle className="h-5 w-5 mr-2 text-blue-600" />
             Dental Chart
           </h4>
+          <p className="text-xs text-gray-500 mb-3">{chartConfig.label} - lower arch shown in dentist-view orientation</p>
 
           {/* Upper Jaw */}
           <div className="mb-4">
             <h5 className="text-sm font-medium text-gray-700 mb-2">Upper Jaw</h5>
             <div className="flex justify-center space-x-1">
-              {toothNumbers.slice(0, 16).map(toothNumber =>
+              {chartConfig.upper.map(toothNumber =>
                 renderTooth(toothNumber, record.toothChart?.[toothNumber])
               )}
             </div>
@@ -148,11 +151,25 @@ const DentalChartDisplay = ({ patientId, visitId, showHistory = false }) => {
           <div>
             <h5 className="text-sm font-medium text-gray-700 mb-2">Lower Jaw</h5>
             <div className="flex justify-center space-x-1">
-              {toothNumbers.slice(16, 32).map(toothNumber =>
+              {chartConfig.lower.map(toothNumber =>
                 renderTooth(toothNumber, record.toothChart?.[toothNumber])
               )}
             </div>
           </div>
+
+          {chartType === 'MIXED' && (
+            <div className="mt-4 border-t pt-4">
+              <h5 className="text-sm font-medium text-gray-700 mb-2 text-center">Primary Teeth (Mixed Dentition)</h5>
+              <div className="space-y-2">
+                <div className="flex justify-center space-x-1">
+                  {primaryUpper.map((toothNumber) => renderTooth(toothNumber, record.toothChart?.[toothNumber]))}
+                </div>
+                <div className="flex justify-center space-x-1">
+                  {primaryLower.map((toothNumber) => renderTooth(toothNumber, record.toothChart?.[toothNumber]))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Legend */}
           <div className="mt-6 flex flex-wrap gap-3 items-center justify-center">
@@ -331,6 +348,41 @@ const DentalChartDisplay = ({ patientId, visitId, showHistory = false }) => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {(record.treatmentPlan?.periodontalChart || record.treatmentPlan?.orthodonticExam) && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+            <h4 className="text-lg font-semibold text-gray-900">Extended Dental Assessment</h4>
+
+            {record.treatmentPlan?.periodontalChart && (
+              <div>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">Periodontal Summary</h5>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                  <div className="p-3 rounded bg-purple-50 border border-purple-100">Plaque Score: {record.treatmentPlan.periodontalChart.plaqueScore || '-'}</div>
+                  <div className="p-3 rounded bg-purple-50 border border-purple-100">Bleeding Score: {record.treatmentPlan.periodontalChart.bleedingScore || '-'}</div>
+                  <div className="p-3 rounded bg-purple-50 border border-purple-100">Risk: {record.treatmentPlan.periodontalChart.overallRisk || '-'}</div>
+                </div>
+                {record.treatmentPlan.periodontalChart.notes && (
+                  <p className="mt-2 text-sm text-gray-700">{record.treatmentPlan.periodontalChart.notes}</p>
+                )}
+              </div>
+            )}
+
+            {record.treatmentPlan?.orthodonticExam && (
+              <div>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">Orthodontic Exam</h5>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div className="p-3 rounded bg-blue-50 border border-blue-100">Angle L/R: {record.treatmentPlan.orthodonticExam.angleClassLeft || '-'} / {record.treatmentPlan.orthodonticExam.angleClassRight || '-'}</div>
+                  <div className="p-3 rounded bg-blue-50 border border-blue-100">Overjet / Overbite: {record.treatmentPlan.orthodonticExam.overjet || '-'} / {record.treatmentPlan.orthodonticExam.overbite || '-'}</div>
+                  <div className="p-3 rounded bg-blue-50 border border-blue-100">Crossbite: {record.treatmentPlan.orthodonticExam.crossbite || '-'}</div>
+                  <div className="p-3 rounded bg-blue-50 border border-blue-100">Midline Shift: {record.treatmentPlan.orthodonticExam.midlineShift || '-'}</div>
+                </div>
+                {record.treatmentPlan.orthodonticExam.recommendation && (
+                  <p className="mt-2 text-sm text-gray-700"><span className="font-medium">Recommendation:</span> {record.treatmentPlan.orthodonticExam.recommendation}</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

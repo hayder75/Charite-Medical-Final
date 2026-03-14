@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Calendar, Download, Printer, Filter, ChevronLeft, Table, FileText, Edit2, Save } from 'lucide-react';
 import api from '../../services/api';
 import Layout from '../../components/common/Layout';
 import toast from 'react-hot-toast';
 
-const DiseaseReports = () => {
+const DiseaseReports = ({ forceSelectedMode = false }) => {
+    const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('summary'); // 'summary' or 'detailed'
     const [reportType, setReportType] = useState('WEEKLY'); // WEEKLY or MONTHLY
     const [startDate, setStartDate] = useState(() => {
@@ -16,6 +18,9 @@ const DiseaseReports = () => {
     const [loading, setLoading] = useState(false);
     const [reportData, setReportData] = useState([]);
     const [detailedData, setDetailedData] = useState([]);
+    const [reportScope, setReportScope] = useState(forceSelectedMode ? 'SELECTED' : 'ALL'); // ALL or SELECTED
+    const [selectedDiseases, setSelectedDiseases] = useState([]);
+    const [diseaseSearch, setDiseaseSearch] = useState('');
 
     // Edit mode for manual entry
     const [isEditing, setIsEditing] = useState(false);
@@ -49,6 +54,42 @@ const DiseaseReports = () => {
         'Rabies', 'Yellow Fever', 'Maternal Death'
     ];
 
+    const allDiseaseOptions = useMemo(() => {
+        const names = new Set();
+        reportData.forEach((item) => item?.name && names.add(item.name));
+        detailedData.forEach((item) => item?.disease && names.add(item.disease));
+        return Array.from(names).sort((a, b) => a.localeCompare(b));
+    }, [reportData, detailedData]);
+
+    const filteredDiseaseOptions = useMemo(() => {
+        const q = diseaseSearch.trim().toLowerCase();
+        if (!q) return allDiseaseOptions.slice(0, 40);
+        return allDiseaseOptions.filter((name) => name.toLowerCase().includes(q)).slice(0, 40);
+    }, [allDiseaseOptions, diseaseSearch]);
+
+    const isDiseaseSelected = (name) =>
+        selectedDiseases.some((item) => item.toLowerCase() === String(name).toLowerCase());
+
+    const toggleDiseaseSelection = (name) => {
+        setSelectedDiseases((prev) => {
+            if (prev.some((item) => item.toLowerCase() === name.toLowerCase())) {
+                return prev.filter((item) => item.toLowerCase() !== name.toLowerCase());
+            }
+            return [...prev, name];
+        });
+    };
+
+    const clearDiseaseSelection = () => {
+        setSelectedDiseases([]);
+        setDiseaseSearch('');
+    };
+
+    const diseaseMatchesSelection = (name) => {
+        if (reportScope !== 'SELECTED') return true;
+        if (selectedDiseases.length === 0) return false;
+        return isDiseaseSelected(name);
+    };
+
     useEffect(() => {
         if (activeTab === 'summary') {
             fetchReport();
@@ -56,6 +97,16 @@ const DiseaseReports = () => {
             fetchDetailedReport();
         }
     }, [startDate, endDate, activeTab]);
+
+    useEffect(() => {
+        if (forceSelectedMode) {
+            setReportScope('SELECTED');
+        } else {
+            setReportScope('ALL');
+            setSelectedDiseases([]);
+            setDiseaseSearch('');
+        }
+    }, [forceSelectedMode]);
 
     const fetchReport = async () => {
         try {
@@ -124,39 +175,50 @@ const DiseaseReports = () => {
     // Section 1: Weekly Reportable / Common (Everything NOT in immediate list)
     const weeklyDiseases = reportData.filter(d =>
         !d.reportFrequency || d.reportFrequency === 'WEEKLY' || d.reportFrequency === 'NONE'
-    );
+    ).filter((d) => diseaseMatchesSelection(d.name));
+
+    const filteredDetailedData = detailedData.filter((item) => diseaseMatchesSelection(item.disease));
 
     // Section 3: Immediately Reportable (Match against fixed list + any extra marked immediate)
     // We map the fixed list to data objects, filling with 0s if not found
-    const immediateDiseasesDisplay = immediatelyReportableList.map(name => {
-        // Fuzzy match or exact match from reportData
-        const found = reportData.find(d =>
-            d.name.toLowerCase().includes(name.toLowerCase()) ||
-            (name === 'Viral Hemorrhagic Fever' && d.name.toLowerCase().includes('hemorrhagic'))
+    const immediateDiseasesDisplay = reportScope === 'SELECTED'
+        ? reportData.filter((d) => {
+            const isImmediate = d.reportFrequency === 'IMMEDIATE' ||
+                immediatelyReportableList.some((name) => d.name.toLowerCase().includes(name.toLowerCase()));
+            return isImmediate && diseaseMatchesSelection(d.name);
+        })
+        : immediatelyReportableList.map(name => {
+            const found = reportData.find(d =>
+                d.name.toLowerCase().includes(name.toLowerCase()) ||
+                (name === 'Viral Hemorrhagic Fever' && d.name.toLowerCase().includes('hemorrhagic'))
+            );
+
+            if (found) return found;
+
+            return {
+                id: `temp-${name}`,
+                name: name,
+                outPatientCases: 0,
+                inPatientCases: 0,
+                deaths: 0,
+                isTemp: true
+            };
+        });
+
+    const extraImmediate = reportScope === 'SELECTED'
+        ? []
+        : reportData.filter(d =>
+            d.reportFrequency === 'IMMEDIATE' &&
+            !immediatelyReportableList.some(name => d.name.toLowerCase().includes(name.toLowerCase()))
         );
-
-        if (found) return found;
-
-        return {
-            id: `temp-${name}`,
-            name: name,
-            outPatientCases: 0,
-            inPatientCases: 0,
-            deaths: 0,
-            isTemp: true
-        };
-    });
-
-    // Get any other immediate ones that might exist in DB but not in our fixed list
-    const extraImmediate = reportData.filter(d =>
-        d.reportFrequency === 'IMMEDIATE' &&
-        !immediatelyReportableList.some(name => d.name.toLowerCase().includes(name.toLowerCase()))
-    );
 
     const finalImmediateList = [...immediateDiseasesDisplay, ...extraImmediate];
 
     return (
-        <Layout title="Disease Reporting" subtitle="WHO-Aligned Weekly & Monthly Reports">
+        <Layout
+            title={forceSelectedMode ? 'Selected Disease Report' : 'Disease Reporting'}
+            subtitle={forceSelectedMode ? 'Filtered disease report with selection and print' : 'WHO-Aligned Weekly & Monthly Reports'}
+        >
             <style type="text/css">
                 {`
                 @media print {
@@ -247,6 +309,12 @@ const DiseaseReports = () => {
                             <div className="flex bg-gray-100 p-1 rounded-lg">
                                 <button onClick={() => setActiveTab('summary')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'summary' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600'}`}>Summary Form</button>
                                 <button onClick={() => setActiveTab('detailed')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'detailed' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600'}`}>Detailed Line List</button>
+                                <button
+                                    onClick={() => navigate(forceSelectedMode ? '/admin/disease-reports' : '/admin/selected-disease-report')}
+                                    className="px-4 py-2 rounded-md text-sm font-medium transition-colors text-gray-600 hover:bg-white"
+                                >
+                                    {forceSelectedMode ? 'Main Report' : 'Selected Report'}
+                                </button>
                             </div>
                             <div className="h-6 w-px bg-gray-300 mx-2"></div>
                             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm" />
@@ -278,6 +346,56 @@ const DiseaseReports = () => {
                     {isEditing && (
                         <div className="mt-2 text-sm text-amber-600 bg-amber-50 p-2 rounded border border-amber-200">
                             Note: You are in Edit Mode. Changes made here apply to the generated print report but are temporary and not saved to the database.
+                        </div>
+                    )}
+
+                    {forceSelectedMode && (
+                        <div className="mt-3 border border-blue-200 bg-blue-50 rounded-lg p-3">
+                            <div className="flex flex-col md:flex-row md:items-center gap-3">
+                                <div className="flex-1">
+                                    <label className="text-sm font-medium text-blue-900">Select diseases to include</label>
+                                    <input
+                                        type="text"
+                                        value={diseaseSearch}
+                                        onChange={(e) => setDiseaseSearch(e.target.value)}
+                                        placeholder="Search disease, then click to add"
+                                        className="mt-1 w-full border border-blue-200 rounded-md px-3 py-2 text-sm"
+                                    />
+                                </div>
+                                <button
+                                    onClick={clearDiseaseSelection}
+                                    className="px-3 py-2 text-sm rounded-md border border-blue-200 text-blue-800 hover:bg-blue-100"
+                                >
+                                    Clear Selection
+                                </button>
+                            </div>
+
+                            <div className="mt-2 max-h-40 overflow-auto border border-blue-100 rounded-md bg-white">
+                                {filteredDiseaseOptions.length === 0 ? (
+                                    <div className="p-2 text-sm text-gray-500">No matching diseases</div>
+                                ) : (
+                                    filteredDiseaseOptions.map((name) => (
+                                        <button
+                                            key={name}
+                                            onClick={() => toggleDiseaseSelection(name)}
+                                            className={`w-full text-left px-3 py-2 text-sm border-b last:border-b-0 ${isDiseaseSelected(name) ? 'bg-blue-100 text-blue-900 font-medium' : 'hover:bg-gray-50'}`}
+                                        >
+                                            {isDiseaseSelected(name) ? '✓ ' : ''}{name}
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap gap-2">
+                                {selectedDiseases.length === 0 ? (
+                                    <span className="text-xs text-gray-500">No disease selected yet</span>
+                                ) : selectedDiseases.map((name) => (
+                                    <span key={name} className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-xs bg-blue-600 text-white">
+                                        {name}
+                                        <button onClick={() => toggleDiseaseSelection(name)} className="font-bold leading-none">x</button>
+                                    </span>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -496,7 +614,7 @@ const DiseaseReports = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {detailedData.map((item, idx) => (
+                                    {filteredDetailedData.map((item, idx) => (
                                         <tr key={idx}>
                                             <td className="border border-black p-2">{new Date(item.date).toLocaleDateString()}</td>
                                             <td className="border border-black p-2">{item.patientName}</td>
@@ -518,9 +636,17 @@ const DiseaseReports = () => {
                         {/* Header */}
                         <div className="text-center mb-2">
                             <h1 className="font-bold text-lg uppercase" style={{ margin: 0 }}>
-                                {reportType === 'WEEKLY' ? 'WEEKLY' : 'MONTHLY'} DISEASE REPORT FORM
+                                {reportScope === 'SELECTED'
+                                    ? `SELECTED DISEASES REPORT (${selectedDiseases.length})`
+                                    : `${reportType === 'WEEKLY' ? 'WEEKLY' : 'MONTHLY'} DISEASE REPORT FORM`}
                             </h1>
                         </div>
+
+                        {reportScope === 'SELECTED' && (
+                            <div style={{ fontSize: '9pt', marginBottom: '6px' }}>
+                                <strong>Included Diseases:</strong> {selectedDiseases.length > 0 ? selectedDiseases.join(', ') : 'None selected'}
+                            </div>
+                        )}
 
                         <div className="header-box">
                             <div className="w-1/2 pr-2 border-r border-black">
@@ -681,8 +807,13 @@ const DiseaseReports = () => {
                     /* Detailed Line List Print Version */
                     <div className="w-full">
                         <div className="text-center mb-4">
-                            <h1 className="font-bold text-lg uppercase">DISEASE DETAILED LINE LIST</h1>
+                            <h1 className="font-bold text-lg uppercase">
+                                {reportScope === 'SELECTED' ? 'SELECTED DISEASES DETAILED LINE LIST' : 'DISEASE DETAILED LINE LIST'}
+                            </h1>
                             <p className="text-sm">Period: {startDate} to {endDate}</p>
+                            {reportScope === 'SELECTED' && (
+                                <p className="text-sm">Diseases: {selectedDiseases.length > 0 ? selectedDiseases.join(', ') : 'None selected'}</p>
+                            )}
                         </div>
                         <table className="print-table">
                             <thead>
@@ -697,7 +828,7 @@ const DiseaseReports = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {detailedData.map((item, idx) => (
+                                {filteredDetailedData.map((item, idx) => (
                                     <tr key={idx}>
                                         <td>{new Date(item.date).toLocaleDateString()}</td>
                                         <td>{item.patientName}</td>

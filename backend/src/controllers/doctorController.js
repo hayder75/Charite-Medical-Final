@@ -6929,3 +6929,280 @@ exports.deleteMedicationOrder = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+// Doctor self-report daily work endpoints
+const DW_INCLUDED_CATEGORIES = new Set(['PROCEDURE', 'DENTAL', 'TREATMENT', 'LAB', 'RADIOLOGY', 'EMERGENCY_DRUG']);
+const DW_PAYMENT_TYPES = ['CASH', 'BANK', 'INSURANCE', 'CHARITY'];
+
+const dwDateKey = (dateValue) => {
+  const d = new Date(dateValue);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const dwRelevantTotals = (billing) => {
+  const allServices = Array.isArray(billing?.services) ? billing.services : [];
+  const relevantServices = allServices.filter((item) => DW_INCLUDED_CATEGORIES.has(item?.service?.category));
+  const billedRelevant = relevantServices.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+  const ratio = billing?.totalAmount > 0 ? billedRelevant / billing.totalAmount : 0;
+  const paidRelevant = Math.min(billedRelevant, (billing?.paidAmount || 0) * ratio);
+  return { billedRelevant, paidRelevant, ratio, relevantServices };
+};
+
+const dwVisitWhere = (doctorId, assignmentIds = []) => {
+  const orConditions = [{ suggestedDoctorId: doctorId }];
+  if (assignmentIds.length > 0) {
+    orConditions.push({ assignmentId: { in: assignmentIds } });
+  }
+  return { OR: orConditions };
+};
+
+const dwAssignmentIds = async (doctorId) => {
+  const assignments = await prisma.assignment.findMany({ where: { doctorId }, select: { id: true } });
+  return assignments.map((item) => item.id);
+};
+
+exports.getDailyWorkMonthly = async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const year = Number.parseInt(req.query.year, 10) || new Date().getFullYear();
+    const month = Number.parseInt(req.query.month, 10);
+    const normalizedMonth = Number.isInteger(month) ? month : new Date().getMonth();
+
+    const startDate = new Date(year, normalizedMonth, 1, 0, 0, 0, 0);
+    const endDate = new Date(year, normalizedMonth + 1, 0, 23, 59, 59, 999);
+    const daysInMonth = new Date(year, normalizedMonth + 1, 0).getDate();
+
+    const assignmentIds = await dwAssignmentIds(doctorId);
+    const visitWhere = dwVisitWhere(doctorId, assignmentIds);
+
+    const visits = await prisma.visit.findMany({
+      where: { createdAt: { gte: startDate, lte: endDate }, ...visitWhere },
+      include: {
+        patient: { select: { id: true, name: true } },
+        bills: { include: { services: { include: { service: { select: { id: true, name: true, category: true } } } } } }
+      }
+    });
+
+    const payments = await prisma.billPayment.findMany({
+      where: {
+        type: { in: DW_PAYMENT_TYPES },
+        createdAt: { gte: startDate, lte: endDate },
+        billing: { visit: visitWhere }
+      },
+      include: {
+        billing: {
+          select: {
+            id: true,
+            totalAmount: true,
+            paidAmount: true,
+            services: { include: { service: { select: { category: true } } } }
+          }
+        }
+      }
+    });
+
+    const dayMap = new Map();
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const key = `${year}-${String(normalizedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      dayMap.set(key, {
+        date: key,
+        day,
+        visits: 0,
+        patients: 0,
+        billedAmount: 0,
+        paidAmountByVisitDate: 0,
+        collectedAmountByPaymentDate: 0,
+        cashCollectedByPaymentDate: 0,
+        bankCollectedByPaymentDate: 0,
+        insuranceCollectedByPaymentDate: 0,
+        charityCollectedByPaymentDate: 0,
+        _patientIds: new Set()
+      });
+    }
+
+    visits.forEach((visit) => {
+      const key = dwDateKey(visit.createdAt);
+      const bucket = dayMap.get(key);
+      if (!bucket) return;
+
+      bucket.visits += 1;
+      if (visit.patient?.id) bucket._patientIds.add(visit.patient.id);
+
+      (visit.bills || []).forEach((billing) => {
+        const totals = dwRelevantTotals(billing);
+        bucket.billedAmount += totals.billedRelevant;
+        bucket.paidAmountByVisitDate += totals.paidRelevant;
+      });
+    });
+
+    payments.forEach((payment) => {
+      const key = dwDateKey(payment.createdAt);
+      const bucket = dayMap.get(key);
+      if (!bucket) return;
+
+      const totals = dwRelevantTotals(payment.billing);
+      const relevantPaymentAmount = (payment.amount || 0) * (totals.ratio || 0);
+      bucket.collectedAmountByPaymentDate += relevantPaymentAmount;
+
+      if (payment.type === 'CASH') bucket.cashCollectedByPaymentDate += relevantPaymentAmount;
+      if (payment.type === 'BANK') bucket.bankCollectedByPaymentDate += relevantPaymentAmount;
+      if (payment.type === 'INSURANCE') bucket.insuranceCollectedByPaymentDate += relevantPaymentAmount;
+      if (payment.type === 'CHARITY') bucket.charityCollectedByPaymentDate += relevantPaymentAmount;
+    });
+
+    const dailyData = Array.from(dayMap.values())
+      .map((item) => ({ ...item, patients: item._patientIds.size, _patientIds: undefined }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const summary = dailyData.reduce((acc, item) => {
+      acc.visits += item.visits;
+      acc.uniquePatientApprox += item.patients;
+      acc.billedAmount += item.billedAmount;
+      acc.paidAmountByVisitDate += item.paidAmountByVisitDate;
+      acc.collectedAmountByPaymentDate += item.collectedAmountByPaymentDate;
+      acc.cashCollectedByPaymentDate += item.cashCollectedByPaymentDate;
+      acc.bankCollectedByPaymentDate += item.bankCollectedByPaymentDate;
+      acc.insuranceCollectedByPaymentDate += item.insuranceCollectedByPaymentDate;
+      acc.charityCollectedByPaymentDate += item.charityCollectedByPaymentDate;
+      return acc;
+    }, {
+      visits: 0,
+      uniquePatientApprox: 0,
+      billedAmount: 0,
+      paidAmountByVisitDate: 0,
+      collectedAmountByPaymentDate: 0,
+      cashCollectedByPaymentDate: 0,
+      bankCollectedByPaymentDate: 0,
+      insuranceCollectedByPaymentDate: 0,
+      charityCollectedByPaymentDate: 0
+    });
+
+    return res.json({ year, month: normalizedMonth, summary, dailyData });
+  } catch (error) {
+    console.error('Error fetching doctor daily work monthly data:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getDailyWorkDayDetails = async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { date } = req.query;
+
+    if (!date) return res.status(400).json({ error: 'Date is required in YYYY-MM-DD format' });
+
+    const parsedDate = new Date(`${date}T00:00:00`);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+
+    const dayStart = new Date(parsedDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(parsedDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const assignmentIds = await dwAssignmentIds(doctorId);
+    const visitWhere = dwVisitWhere(doctorId, assignmentIds);
+
+    const visits = await prisma.visit.findMany({
+      where: { createdAt: { gte: dayStart, lte: dayEnd }, ...visitWhere },
+      include: {
+        patient: { select: { id: true, name: true, gender: true, age: true } },
+        bills: { include: { services: { include: { service: { select: { id: true, name: true, category: true } } } } } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const paymentsOnDate = await prisma.billPayment.findMany({
+      where: {
+        type: { in: DW_PAYMENT_TYPES },
+        createdAt: { gte: dayStart, lte: dayEnd },
+        billing: { visit: visitWhere }
+      },
+      include: {
+        billing: {
+          include: {
+            visit: { select: { id: true, createdAt: true, patient: { select: { id: true, name: true } } } },
+            services: { include: { service: { select: { category: true } } } }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const visitDetails = visits.map((visit) => {
+      const relevantServices = [];
+      let billedAmount = 0;
+      let paidAmountByVisitDate = 0;
+
+      (visit.bills || []).forEach((billing) => {
+        const totals = dwRelevantTotals(billing);
+        billedAmount += totals.billedRelevant;
+        paidAmountByVisitDate += totals.paidRelevant;
+
+        totals.relevantServices.forEach((serviceItem) => {
+          relevantServices.push({
+            billingId: billing.id,
+            serviceId: serviceItem.service?.id,
+            serviceName: serviceItem.service?.name,
+            category: serviceItem.service?.category,
+            quantity: serviceItem.quantity,
+            unitPrice: serviceItem.unitPrice,
+            totalPrice: serviceItem.totalPrice
+          });
+        });
+      });
+
+      return {
+        visitId: visit.id,
+        visitUid: visit.visitUid,
+        patientId: visit.patient?.id,
+        patientName: visit.patient?.name,
+        patientGender: visit.patient?.gender,
+        patientAge: visit.patient?.age,
+        visitCreatedAt: visit.createdAt,
+        billedAmount,
+        paidAmountByVisitDate,
+        services: relevantServices
+      };
+    });
+
+    const paymentDetails = paymentsOnDate.map((payment) => {
+      const totals = dwRelevantTotals(payment.billing);
+      const relevantPaymentAmount = (payment.amount || 0) * (totals.ratio || 0);
+      return {
+        paymentId: payment.id,
+        billingId: payment.billingId,
+        paymentType: payment.type,
+        amount: payment.amount || 0,
+        relevantAmount: relevantPaymentAmount,
+        bankName: payment.bankName,
+        transNumber: payment.transNumber,
+        patientId: payment.billing?.visit?.patient?.id,
+        patientName: payment.billing?.visit?.patient?.name,
+        visitId: payment.billing?.visit?.id,
+        visitDate: payment.billing?.visit?.createdAt,
+        createdAt: payment.createdAt
+      };
+    });
+
+    const uniquePatients = new Set(visitDetails.map((item) => item.patientId).filter(Boolean));
+    const summary = {
+      date,
+      visits: visitDetails.length,
+      patients: uniquePatients.size,
+      billedAmount: visitDetails.reduce((sum, item) => sum + item.billedAmount, 0),
+      paidAmountByVisitDate: visitDetails.reduce((sum, item) => sum + item.paidAmountByVisitDate, 0),
+      collectedAmountByPaymentDate: paymentDetails.reduce((sum, item) => sum + item.relevantAmount, 0),
+      cashCollectedByPaymentDate: paymentDetails.filter((item) => item.paymentType === 'CASH').reduce((sum, item) => sum + item.relevantAmount, 0),
+      bankCollectedByPaymentDate: paymentDetails.filter((item) => item.paymentType === 'BANK').reduce((sum, item) => sum + item.relevantAmount, 0),
+      insuranceCollectedByPaymentDate: paymentDetails.filter((item) => item.paymentType === 'INSURANCE').reduce((sum, item) => sum + item.relevantAmount, 0),
+      charityCollectedByPaymentDate: paymentDetails.filter((item) => item.paymentType === 'CHARITY').reduce((sum, item) => sum + item.relevantAmount, 0)
+    };
+
+    return res.json({ date, summary, visits: visitDetails, paymentsOnDate: paymentDetails });
+  } catch (error) {
+    console.error('Error fetching doctor daily work day details:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};

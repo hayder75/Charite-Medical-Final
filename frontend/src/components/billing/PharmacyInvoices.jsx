@@ -3,6 +3,7 @@ import { Pill, CreditCard, Clock, CheckCircle, AlertTriangle, User, Printer } fr
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { formatMedicationName } from '../../utils/medicalStandards';
+import BankMethodSelect from '../common/BankMethodSelect';
 
 const PharmacyInvoices = () => {
   const [invoices, setInvoices] = useState([]);
@@ -443,8 +444,7 @@ const PharmacyInvoices = () => {
                   <>
                     <div>
                       <label className="label">Bank Name</label>
-                      <input
-                        type="text"
+                      <BankMethodSelect
                         className="input"
                         value={paymentData.bankName}
                         onChange={(e) => setPaymentData({ ...paymentData, bankName: e.target.value })}

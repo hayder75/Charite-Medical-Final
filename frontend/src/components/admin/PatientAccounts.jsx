@@ -3,6 +3,7 @@ import { DollarSign, Plus, CreditCard, Wallet, TrendingUp, TrendingDown, Search,
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
+import BankMethodSelect from '../common/BankMethodSelect';
 
 const PatientAccounts = () => {
   const { user } = useAuth();
@@ -524,8 +525,7 @@ const AccountModal = ({ account, type, onClose }) => {
                   <>
                     <div>
                       <label className="label">Bank Name</label>
-                      <input
-                        type="text"
+                      <BankMethodSelect
                         className="input"
                         value={formData.bankName}
                         onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}

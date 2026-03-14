@@ -5,6 +5,7 @@ import { User, Phone, Mail, MapPin, Heart, Calendar, CreditCard, Search, UserPlu
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import PatientAttachedImagesSection from '../../components/common/PatientAttachedImagesSection';
+import BankMethodSelect from '../../components/common/BankMethodSelect';
 
 const PatientRegistration = () => {
   const [searchParams] = useSearchParams();
@@ -21,6 +22,8 @@ const PatientRegistration = () => {
   });
   const [selectedInsurance, setSelectedInsurance] = useState('');
   const [paymentErrors, setPaymentErrors] = useState({});
+  const [uploadingProof, setUploadingProof] = useState(false);
+  const [paymentProofPath, setPaymentProofPath] = useState('');
 
   // New state for patient search
   const [registrationType, setRegistrationType] = useState(''); // 'new' or 'existing'
@@ -283,9 +286,6 @@ const PatientRegistration = () => {
       if (!bankDetails.bankName.trim()) {
         errors.bankName = 'Bank name is required for bank transfers';
       }
-      if (!bankDetails.transNumber.trim()) {
-        errors.transNumber = 'Transaction number is required for bank transfers';
-      }
     }
 
     if (paymentMethod === 'INSURANCE' && !selectedInsurance) {
@@ -321,7 +321,8 @@ const PatientRegistration = () => {
         bankName: bankDetails.bankName || null,
         transNumber: bankDetails.transNumber || null,
         insuranceId: selectedInsurance || null,
-        notes: `Payment method: ${paymentMethod}`
+        notes: `Payment method: ${paymentMethod}`,
+        paymentProofPath: paymentProofPath || null
       };
 
       const response = await api.post('/billing/payments', paymentData);
@@ -337,6 +338,25 @@ const PatientRegistration = () => {
     }
   };
 
+  const handlePaymentProofUpload = async (file) => {
+    if (!file) return;
+    try {
+      setUploadingProof(true);
+      const formData = new FormData();
+      formData.append('paymentProof', file);
+      const response = await api.post('/billing/payments/upload-proof', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setPaymentProofPath(response.data?.file?.path || '');
+      toast.success('Payment proof uploaded');
+    } catch (error) {
+      console.error('Error uploading payment proof:', error);
+      toast.error(error.response?.data?.error || 'Failed to upload payment proof');
+    } finally {
+      setUploadingProof(false);
+    }
+  };
+
   const resetForm = () => {
     reset();
     setPatient(null);
@@ -346,6 +366,7 @@ const PatientRegistration = () => {
     setPaymentMethod('');
     setBankDetails({ bankName: '', transNumber: '' });
     setSelectedInsurance('');
+    setPaymentProofPath('');
     setPaymentErrors({});
     setRegistrationType('');
     setSearchQuery('');
@@ -903,19 +924,17 @@ const PatientRegistration = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="label">Bank Name *</label>
-                    <input
-                      type="text"
+                    <BankMethodSelect
                       className={`input ${paymentErrors.bankName ? 'border-red-500' : ''}`}
                       value={bankDetails.bankName}
                       onChange={(e) => setBankDetails({ ...bankDetails, bankName: e.target.value })}
-                      placeholder="Enter bank name"
                     />
                     {paymentErrors.bankName && (
                       <p className="text-red-500 text-sm mt-1">{paymentErrors.bankName}</p>
                     )}
                   </div>
                   <div>
-                    <label className="label">Transaction Number *</label>
+                    <label className="label">Transaction Number</label>
                     <input
                       type="text"
                       className={`input ${paymentErrors.transNumber ? 'border-red-500' : ''}`}
@@ -923,9 +942,22 @@ const PatientRegistration = () => {
                       onChange={(e) => setBankDetails({ ...bankDetails, transNumber: e.target.value })}
                       placeholder="Enter transaction number"
                     />
+                    <p className="text-xs text-gray-500 mt-1">Optional reference number from the bank or wallet.</p>
                     {paymentErrors.transNumber && (
                       <p className="text-red-500 text-sm mt-1">{paymentErrors.transNumber}</p>
                     )}
+                  </div>
+                  <div>
+                    <label className="label">Payment Proof Screenshot (Optional)</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="input"
+                      disabled={uploadingProof}
+                      onChange={(e) => handlePaymentProofUpload(e.target.files?.[0])}
+                    />
+                    {uploadingProof && <p className="text-xs text-blue-600 mt-1">Uploading proof...</p>}
+                    {paymentProofPath && <p className="text-xs text-green-700 mt-1">Proof attached: {paymentProofPath}</p>}
                   </div>
                 </div>
               </div>

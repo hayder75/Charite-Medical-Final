@@ -8,6 +8,7 @@ import UnifiedQueue from '../../components/doctor/UnifiedQueue';
 import MedicalCertificates from './MedicalCertificates';
 import ReferralPage from './ReferralPage';
 import InternationalMedicalCertificatePage from './InternationalMedicalCertificatePage';
+import DoctorDailyWork from './DoctorDailyWork';
 import api from '../../services/api';
 import {
   Stethoscope,
@@ -172,12 +173,12 @@ const DoctorDashboard = () => {
                   </div>
                 </div>
               </button>
-              <button className="w-full text-left p-3 rounded-lg border transition-all duration-200 hover:shadow-md" style={{ borderColor: '#2e13d1', backgroundColor: 'transparent' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#F8FAFC'} onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}>
+              <button onClick={() => navigate('/doctor/daily-work')} className="w-full text-left p-3 rounded-lg border transition-all duration-200 hover:shadow-md" style={{ borderColor: '#2e13d1', backgroundColor: 'transparent' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#F8FAFC'} onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}>
                 <div className="flex items-center">
                   <Clock className="h-5 w-5 mr-3" style={{ color: '#EA2E00' }} />
                   <div>
-                    <p className="font-medium" style={{ color: '#0C0E0B' }}>Schedule Appointment</p>
-                    <p className="text-sm" style={{ color: '#2e13d1' }}>Book follow-up appointments</p>
+                    <p className="font-medium" style={{ color: '#0C0E0B' }}>Daily Work Report</p>
+                    <p className="text-sm" style={{ color: '#2e13d1' }}>Calendar, selected-day details, and print</p>
                   </div>
                 </div>
               </button>
@@ -225,6 +226,7 @@ const DoctorDashboard = () => {
       <Route path="/history" element={<ComprehensivePatientHistory />} />
       <Route path="/legacy-history" element={<PatientHistory />} />
       <Route path="/medical-certificates" element={<MedicalCertificates />} />
+      <Route path="/daily-work" element={<DoctorDailyWork />} />
       <Route path="/referrals" element={<ReferralPage />} />
       <Route path="/international-certificates" element={<InternationalMedicalCertificatePage />} />
     </Routes>

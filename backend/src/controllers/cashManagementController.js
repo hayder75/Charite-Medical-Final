@@ -38,22 +38,64 @@ const resetSessionSchema = z.object({
 
 const ACCEPTED_SERVICE_BUCKETS = {
   ALL: { label: 'All Services' },
-  LAB: { label: 'Lab' },
-  RADIOLOGY: { label: 'Radiology' },
+  LAB_ORDERED: { label: 'Lab (Doctor Ordered)' },
+  LAB_WALKIN: { label: 'Lab Walk-in' },
+  RADIOLOGY_ORDERED: { label: 'Radiology (Doctor Ordered)' },
+  RADIOLOGY_WALKIN: { label: 'Radiology Walk-in' },
   PROCEDURE: { label: 'Procedure' },
   NURSE_SERVICES: { label: 'Nurse Services' },
   CARD_CREATED_GENERAL: { label: 'Medical Card Created' },
   CARD_CREATED_DERMATOLOGY: { label: 'Dermatology Card Created' },
   CARD_REACTIVATION_GENERAL: { label: 'Medical Card Reactivation' },
   CARD_REACTIVATION_DERMATOLOGY: { label: 'Dermatology Card Reactivation' },
-  CONSULTATION_GENERAL: { label: 'Consultation (Medical)' },
-  CONSULTATION_DERMATOLOGY: { label: 'Consultation (Dermatology)' },
   MATERIAL_NEEDS: { label: 'Material Needs' },
   EMERGENCY_MEDICATION: { label: 'Emergency Medication' },
   OTHER: { label: 'Other Services' }
 };
 
-const getAcceptedServiceKey = (service) => {
+const buildAcceptedWalkInFlags = async (billingIds) => {
+  const flagsMap = new Map();
+  const uniqueBillingIds = [...new Set((billingIds || []).filter(Boolean))];
+
+  if (!uniqueBillingIds.length) {
+    return flagsMap;
+  }
+
+  const [labWalkInOrders, radiologyWalkInOrders] = await Promise.all([
+    prisma.labTestOrder.findMany({
+      where: {
+        billingId: { in: uniqueBillingIds },
+        isWalkIn: true
+      },
+      select: { billingId: true }
+    }),
+    prisma.radiologyOrder.findMany({
+      where: {
+        billingId: { in: uniqueBillingIds },
+        isWalkIn: true
+      },
+      select: { billingId: true }
+    })
+  ]);
+
+  labWalkInOrders.forEach((order) => {
+    if (!order.billingId) return;
+    const current = flagsMap.get(order.billingId) || { labWalkIn: false, radiologyWalkIn: false };
+    current.labWalkIn = true;
+    flagsMap.set(order.billingId, current);
+  });
+
+  radiologyWalkInOrders.forEach((order) => {
+    if (!order.billingId) return;
+    const current = flagsMap.get(order.billingId) || { labWalkIn: false, radiologyWalkIn: false };
+    current.radiologyWalkIn = true;
+    flagsMap.set(order.billingId, current);
+  });
+
+  return flagsMap;
+};
+
+const getAcceptedServiceKey = (service, walkInFlags = null) => {
   if (!service) {
     return 'OTHER';
   }
@@ -75,11 +117,11 @@ const getAcceptedServiceKey = (service) => {
   }
 
   if (category === 'LAB') {
-    return 'LAB';
+    return walkInFlags?.labWalkIn ? 'LAB_WALKIN' : 'LAB_ORDERED';
   }
 
   if (category === 'RADIOLOGY') {
-    return 'RADIOLOGY';
+    return walkInFlags?.radiologyWalkIn ? 'RADIOLOGY_WALKIN' : 'RADIOLOGY_ORDERED';
   }
 
   if (category === 'PROCEDURE' || category === 'DENTAL' || category === 'TREATMENT') {
@@ -96,10 +138,6 @@ const getAcceptedServiceKey = (service) => {
 
   if (category === 'EMERGENCY_DRUG') {
     return 'EMERGENCY_MEDICATION';
-  }
-
-  if (category === 'CONSULTATION') {
-    return isDermatology ? 'CONSULTATION_DERMATOLOGY' : 'CONSULTATION_GENERAL';
   }
 
   return 'OTHER';
@@ -1089,7 +1127,6 @@ exports.getAcceptedServicesSummary = async (req, res) => {
       where: {
         type: 'PAYMENT_RECEIVED',
         amount: { gt: 0 },
-        processedById: userId,
         createdAt: {
           gte: targetDate,
           lt: nextDay
@@ -1134,6 +1171,10 @@ exports.getAcceptedServicesSummary = async (req, res) => {
       }
     });
 
+    const walkInFlagsMap = await buildAcceptedWalkInFlags(
+      transactions.map((tx) => tx.billingId).filter(Boolean)
+    );
+
     const serviceTotalsMap = new Map();
     const myTransactions = [];
 
@@ -1159,7 +1200,8 @@ exports.getAcceptedServicesSummary = async (req, res) => {
         let assignedAmount = 0;
 
         billingServices.forEach((billingService, idx) => {
-          const serviceKey = getAcceptedServiceKey(billingService.service);
+          const walkInFlags = walkInFlagsMap.get(tx.billingId) || null;
+          const serviceKey = getAcceptedServiceKey(billingService.service, walkInFlags);
           const isLast = idx === billingServices.length - 1;
           const proportionalAmount = isLast
             ? (tx.amount - assignedAmount)
@@ -1214,19 +1256,21 @@ exports.getAcceptedServicesSummary = async (req, res) => {
         label: ACCEPTED_SERVICE_BUCKETS.OTHER.label
       };
 
-      myTransactions.push({
-        id: tx.id,
-        createdAt: tx.createdAt,
-        paymentMethod: tx.paymentMethod,
-        amount: tx.amount,
-        patientId: tx.patient?.id || null,
-        patientName: tx.patient?.name || 'Unknown Patient',
-        billingId: tx.billingId,
-        primaryServiceKey: primaryService.key,
-        primaryServiceLabel: primaryService.label,
-        allocations: sortedAllocations,
-        description: tx.description
-      });
+      if (tx.processedById === userId) {
+        myTransactions.push({
+          id: tx.id,
+          createdAt: tx.createdAt,
+          paymentMethod: tx.paymentMethod,
+          amount: tx.amount,
+          patientId: tx.patient?.id || null,
+          patientName: tx.patient?.name || 'Unknown Patient',
+          billingId: tx.billingId,
+          primaryServiceKey: primaryService.key,
+          primaryServiceLabel: primaryService.label,
+          allocations: sortedAllocations,
+          description: tx.description
+        });
+      }
     }
 
     const serviceTotals = Array.from(serviceTotalsMap.values()).sort((a, b) => b.amount - a.amount);
