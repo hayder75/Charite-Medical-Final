@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { safeCreatePatient } = require('../utils/prismaCompat');
 
 const normalizeOptionalText = (value) => {
   if (value === undefined || value === null) return null;
@@ -146,16 +147,14 @@ const createWalkInLabOrder = async (req, res) => {
 
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE',
-            ...metadata.patientData
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE',
+          ...metadata.patientData
         });
         break;
       }
@@ -283,16 +282,14 @@ const createWalkInRadiologyOrder = async (req, res) => {
 
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE',
-            ...metadata.patientData
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE',
+          ...metadata.patientData
         });
         break;
       }
@@ -418,15 +415,13 @@ const createWalkInNurseOrder = async (req, res) => {
 
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE'
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE'
         });
         break;
       }
@@ -556,15 +551,13 @@ const createWalkInDoctorOrder = async (req, res) => {
 
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE'
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE'
         });
         break;
       }

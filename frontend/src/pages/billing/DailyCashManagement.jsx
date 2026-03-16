@@ -20,19 +20,20 @@ import {
 } from 'lucide-react';
 import api from '../../services/api';
 import { getServerUrl } from '../../utils/imageUrl';
+import BankMethodSelect from '../../components/common/BankMethodSelect';
 
 const SERVICE_BUTTON_CONFIG = [
   { key: 'ALL', label: 'All Services', icon: Layers, accent: 'bg-slate-100 text-slate-700 border-slate-200' },
-  { key: 'LAB', label: 'Lab', icon: FlaskConical, accent: 'bg-cyan-100 text-cyan-700 border-cyan-200' },
-  { key: 'RADIOLOGY', label: 'Radiology', icon: Scan, accent: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+  { key: 'LAB_ORDERED', label: 'Lab (Doctor Ordered)', icon: FlaskConical, accent: 'bg-cyan-100 text-cyan-700 border-cyan-200' },
+  { key: 'LAB_WALKIN', label: 'Lab Walk-in', icon: FlaskConical, accent: 'bg-sky-100 text-sky-700 border-sky-200' },
+  { key: 'RADIOLOGY_ORDERED', label: 'Radiology (Doctor Ordered)', icon: Scan, accent: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+  { key: 'RADIOLOGY_WALKIN', label: 'Radiology Walk-in', icon: Scan, accent: 'bg-violet-100 text-violet-700 border-violet-200' },
   { key: 'PROCEDURE', label: 'Procedure', icon: Wrench, accent: 'bg-amber-100 text-amber-700 border-amber-200' },
   { key: 'NURSE_SERVICES', label: 'Nurse Services', icon: HeartPulse, accent: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
   { key: 'CARD_CREATED_GENERAL', label: 'Medical Card Created', icon: CreditCard, accent: 'bg-blue-100 text-blue-700 border-blue-200' },
   { key: 'CARD_CREATED_DERMATOLOGY', label: 'Dermatology Card Created', icon: CreditCard, accent: 'bg-violet-100 text-violet-700 border-violet-200' },
   { key: 'CARD_REACTIVATION_GENERAL', label: 'Medical Card Reactivation', icon: CreditCard, accent: 'bg-sky-100 text-sky-700 border-sky-200' },
   { key: 'CARD_REACTIVATION_DERMATOLOGY', label: 'Dermatology Card Reactivation', icon: CreditCard, accent: 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200' },
-  { key: 'CONSULTATION_GENERAL', label: 'Consultation (Medical)', icon: User, accent: 'bg-teal-100 text-teal-700 border-teal-200' },
-  { key: 'CONSULTATION_DERMATOLOGY', label: 'Consultation (Dermatology)', icon: User, accent: 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200' },
   { key: 'MATERIAL_NEEDS', label: 'Material Needs', icon: Package, accent: 'bg-orange-100 text-orange-700 border-orange-200' },
   { key: 'EMERGENCY_MEDICATION', label: 'Emergency Medication', icon: AlertTriangle, accent: 'bg-rose-100 text-rose-700 border-rose-200' },
   { key: 'OTHER', label: 'Other Services', icon: Receipt, accent: 'bg-zinc-100 text-zinc-700 border-zinc-200' }
@@ -1184,8 +1185,7 @@ const DailyCashManagement = () => {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Bank Name</label>
-                      <input
-                        type="text"
+                      <BankMethodSelect
                         value={depositForm.bankName}
                         onChange={(e) => setDepositForm({ ...depositForm, bankName: e.target.value })}
                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"

@@ -51,6 +51,7 @@ const BillingDashboard = () => {
   const [selectedPeriod, setSelectedPeriod] = useState("daily");
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState({ start: null, end: null });
+  const [bankSummary, setBankSummary] = useState({ summary: null, banks: [] });
 
   useEffect(() => {
     fetchDashboardStats();
@@ -67,6 +68,21 @@ const BillingDashboard = () => {
       setStats(data.stats);
       setRecentTransactions(data.recentTransactions);
       setDateRange(data.dateRange);
+
+      const bankStart = data?.dateRange?.start
+        ? new Date(data.dateRange.start).toISOString().split('T')[0]
+        : undefined;
+      const bankEnd = data?.dateRange?.end
+        ? new Date(data.dateRange.end).toISOString().split('T')[0]
+        : undefined;
+
+      const bankResponse = await api.get(
+        `/billing/reports/bank-method-summary${bankStart && bankEnd ? `?startDate=${bankStart}&endDate=${bankEnd}` : ''}`,
+      );
+      setBankSummary({
+        summary: bankResponse.data?.summary || null,
+        banks: bankResponse.data?.banks || [],
+      });
     } catch (error) {
       console.error("Error fetching dashboard stats:", error);
       toast.error("Failed to fetch dashboard statistics");
@@ -302,6 +318,31 @@ const BillingDashboard = () => {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="card">
+        <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+          <Wallet className="h-5 w-5 mr-2 text-indigo-500" />
+          Bank-Wise Collection
+        </h3>
+        {bankSummary.summary ? (
+          <div className="space-y-3">
+            <div className="text-sm text-gray-600">
+              {bankSummary.summary.totalBankTransactions} bank transactions, total {formatCurrency(bankSummary.summary.totalBankAmount || 0)}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {bankSummary.banks.map((bank) => (
+                <div key={bank.bankName} className="p-3 border rounded-lg bg-gray-50">
+                  <div className="font-medium text-gray-900 text-sm">{bank.bankName}</div>
+                  <div className="text-xs text-gray-500 mt-1">{bank.transactions} transactions</div>
+                  <div className="text-sm font-semibold text-gray-900 mt-1">{formatCurrency(bank.amount || 0)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No bank transactions in selected period.</div>
+        )}
       </div>
 
       {/* Quick Actions - All Reception Features */}

@@ -1,4 +1,5 @@
 const prisma = require('../config/database');
+const { safeCreatePatient } = require('../utils/prismaCompat');
 
 /**
  * Create a walk-in lab order for an outsider (non-patient) - NEW SYSTEM
@@ -44,15 +45,13 @@ const createWalkInLabOrder = async (req, res) => {
       
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE'
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE'
         });
         break;
       }
@@ -178,15 +177,13 @@ const createWalkInRadiologyOrder = async (req, res) => {
       
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE'
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE'
         });
         break;
       }
@@ -312,15 +309,13 @@ const createWalkInNurseOrder = async (req, res) => {
       
       if (!existing) {
         // Create "patient" (outsider)
-        patient = await prisma.patient.create({
-          data: {
-            id: outsiderId,
-            name,
-            mobile: phone,
-            type: 'REGULAR',
-            status: 'Active',
-            cardStatus: 'INACTIVE'
-          }
+        patient = await safeCreatePatient(prisma, {
+          id: outsiderId,
+          name,
+          mobile: phone,
+          type: 'REGULAR',
+          status: 'Active',
+          cardStatus: 'INACTIVE'
         });
         break;
       }

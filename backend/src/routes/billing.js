@@ -14,6 +14,7 @@ router.post('/register', fileUpload.single('idDoc'), roleGuard(['BILLING_OFFICER
 router.post('/create-visit', roleGuard(['BILLING_OFFICER', 'RECEPTIONIST', 'ADMIN']), billingController.createVisitForExistingPatient);
 router.delete('/visit/:visitId', roleGuard(['BILLING_OFFICER', 'RECEPTIONIST', 'ADMIN']), billingController.deleteVisit);
 router.get('/check-visit-status/:patientId', roleGuard(['BILLING_OFFICER', 'RECEPTIONIST', 'ADMIN']), billingController.checkPatientVisitStatus);
+router.get('/settings/old-patient-registration-mode', roleGuard(['BILLING_OFFICER', 'RECEPTIONIST', 'ADMIN']), billingController.getOldPatientRegistrationMode);
 
 // Billing operations (Billing Officers, Admin)
 router.post('/', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.createBilling);
@@ -23,6 +24,8 @@ router.get('/dashboard-stats', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingC
 router.get('/insurances', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.getInsurances);
 router.post('/:billingId/services', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.addServiceToBilling);
 router.post('/payments', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.processPayment);
+router.post('/payments/upload-proof', roleGuard(['BILLING_OFFICER', 'ADMIN']), fileUpload.single('paymentProof'), billingController.uploadPaymentProof);
+router.get('/reports/bank-method-summary', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.getBankMethodSummary);
 router.get('/unpaid', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.getUnpaidBillings);
 router.put('/emergency-id', roleGuard(['BILLING_OFFICER', 'ADMIN']), billingController.updateEmergencyPatientId);
 

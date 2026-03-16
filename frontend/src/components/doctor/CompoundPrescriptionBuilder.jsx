@@ -144,6 +144,20 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
     return normalized ? normalized.toUpperCase() : 'N/A';
   };
 
+  const getDoctorQualificationLabel = (doctorData) => {
+    const role = String(doctorData?.role || '').toUpperCase();
+    const qualifications = Array.isArray(doctorData?.qualifications)
+      ? doctorData.qualifications
+      : [];
+    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
+
+    if (role.includes('DERM') || normalizedQualifications.some((q) => q.includes('DERM'))) {
+      return 'Dermato-venereologist';
+    }
+
+    return qualifications.join(', ') || 'General Practitioner';
+  };
+
   const printAllPrescriptions = async () => {
     if (existingPrescriptions.length === 0) return;
 
@@ -159,7 +173,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       const fallbackDoctor = existingPrescriptions.find((p) => p?.doctor?.fullname)?.doctor;
       doctorData = doctorData || fallbackDoctor;
       const doctorName = doctorData?.fullname || 'Dr. Unknown';
-      const doctorQualification = doctorData?.qualifications?.join(', ') || 'Dermatology';
+      const doctorQualification = getDoctorQualificationLabel(doctorData);
 
       const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -290,7 +304,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       const patientGender = (patientData?.gender?.charAt(0) || 'N/A').toUpperCase();
       const patientAge = patientData?.dob ? Math.floor((new Date() - new Date(patientData.dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 'N/A';
       const doctorName = doctorData?.fullname || prescription.doctor?.fullname || 'Dr. Unknown';
-      const doctorQualification = doctorData?.qualifications?.join(', ') || prescription.doctor?.qualifications?.join(', ') || 'Dermatology';
+      const doctorQualification = getDoctorQualificationLabel(doctorData || prescription.doctor);
 
       const currentDate = new Date(prescription.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date(prescription.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });

@@ -212,6 +212,7 @@ const DentalDashboard = ({ patientId, visitId, onComplete }) => {
               <DentalChart
                 patientId={patientId}
                 visitId={visitId}
+                patientAge={patient?.age}
                 onSave={handleDentalChartSave}
                 initialData={dentalRecord}
                 onCreateOrder={handleCreateOrder}

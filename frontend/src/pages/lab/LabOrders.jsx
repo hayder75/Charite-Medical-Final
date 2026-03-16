@@ -1501,51 +1501,54 @@ const LabOrders = () => {
                   {getStatusIcon(order.status)}
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-gray-900">
+                      <h3 className="text-2xl font-bold text-gray-900">
                         {order.patient.name}
                       </h3>
-                      <span className="text-xs text-gray-500 font-normal">
+                      <span className="text-sm text-gray-500 font-normal">
                         ({formatDisplayOrderId(order)})
                       </span>
                       {order.__kind === 'labtest_group' && (
-                        <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-800 text-xs rounded">
+                        <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-800 text-sm rounded">
                           {order.orders?.length || 0} Tests
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-gray-600">
+                    <p className="text-base text-gray-700 font-medium">
                       {order.orders && order.orders.length > 0
                         ? order.orders.map(o => o.labTest?.name).filter(name => name).join(', ') || 'Loading...'
                         : order.services && order.services.length > 0
                           ? order.services.map(service => service.service?.name).filter(name => name).join(', ')
                           : order.type?.name || 'Lab Test'}
-                      {order.isWalkIn && <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">WALK-IN</span>}
+                      {order.isWalkIn && <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 text-sm rounded">WALK-IN</span>}
                       {order.__kind === 'labtest' && (!order.orders || order.orders.length === 0) && (
-                        <span className="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded">Loading tests...</span>
+                        <span className="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-sm rounded">Loading tests...</span>
                       )}
                     </p>
+                    {order.doctor?.fullname && (
+                      <p className="text-base text-indigo-700 font-semibold mt-1">Requested By: Dr. {order.doctor.fullname}</p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(order.status)}`}>
+                  <span className={`px-3 py-1 rounded-full text-base font-semibold ${getStatusColor(order.status)}`}>
                     {order.status}
                   </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-base text-gray-700">
                 <div className="flex items-center">
-                  <User className="h-4 w-4 mr-2" />
+                  <User className="h-5 w-5 mr-2" />
                   <span>{order.patient.name}</span>
                 </div>
                 {order.doctor && (
                   <div className="flex items-center">
-                    <Stethoscope className="h-4 w-4 mr-2" />
+                    <Stethoscope className="h-5 w-5 mr-2" />
                     <span>{order.doctor.fullname}</span>
                   </div>
                 )}
                 <div className="flex items-center">
-                  <Calendar className="h-4 w-4 mr-2" />
+                  <Calendar className="h-5 w-5 mr-2" />
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
               </div>
@@ -1553,7 +1556,7 @@ const LabOrders = () => {
               {(order.status === 'QUEUED' || order.status === 'COMPLETED') && (
                 <div className={`mt-4 p-3 rounded-lg ${order.status === 'QUEUED' ? 'bg-yellow-50' : 'bg-green-50'
                   }`}>
-                  <p className={`text-sm font-medium ${order.status === 'QUEUED' ? 'text-yellow-800' : 'text-green-800'
+                  <p className={`text-base font-semibold ${order.status === 'QUEUED' ? 'text-yellow-800' : 'text-green-800'
                     }`}>
                     {order.status === 'QUEUED' ? 'Click to process tests' : 'Click to view results'}
                   </p>
@@ -1562,7 +1565,7 @@ const LabOrders = () => {
 
               {order.instructions && (
                 <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-700">
+                  <p className="text-base text-gray-700">
                     <strong>Instructions:</strong> {order.instructions}
                   </p>
                 </div>

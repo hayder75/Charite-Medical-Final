@@ -3,6 +3,7 @@ import { Search, Plus, Trash2, Printer, Pill, CheckCircle, X, Save } from 'lucid
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { formatMedicationName } from '../../utils/medicalStandards';
+import { useAuth } from '../../contexts/AuthContext';
 
 const DEFAULT_MEDICATION = {
   serviceId: null,
@@ -21,6 +22,7 @@ const DEFAULT_MEDICATION = {
 };
 
 const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
+  const { user: currentUser } = useAuth();
   const [services, setServices] = useState([]);
   const [existingOrders, setExistingOrders] = useState([]);
   const [selectedMedications, setSelectedMedications] = useState([]);
@@ -81,14 +83,16 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
 
   const filteredServices = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return [];
-    return services
+    const base = services
       .filter((service) => {
+        if (!q) return true;
         const name = (service.name || '').toLowerCase();
         const code = (service.code || '').toLowerCase();
-        return name.includes(q) || code.includes(q);
+        const description = (service.description || '').toLowerCase();
+        return name.includes(q) || code.includes(q) || description.includes(q);
       })
-      .slice(0, 20);
+      .slice(0, 60);
+    return base;
   }, [services, searchTerm]);
 
   const addMedicationFromSearch = (service) => {
@@ -264,6 +268,51 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
     return age;
   };
 
+  const getDoctorQualificationLabel = (doctorData) => {
+    const role = String(doctorData?.role || '').toUpperCase();
+    const qualifications = Array.isArray(doctorData?.qualifications)
+      ? doctorData.qualifications
+      : [];
+    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
+
+    const isHealthOfficer =
+      role.includes('HEALTH_OFFICER') ||
+      role === 'HO' ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (isHealthOfficer) {
+      return 'Health Officer (HO)';
+    }
+
+    if (role.includes('DERM') || normalizedQualifications.some((q) => q.includes('DERM'))) {
+      return 'Dermato-venereologist';
+    }
+
+    return qualifications.join(', ') || 'General Practitioner';
+  };
+
+  const getPrintableDoctorData = () => {
+    return visit?.doctor || currentUser || {};
+  };
+
+  const getPrintableDoctorName = (doctorData) => {
+    const rawName = String(
+      doctorData?.fullname || doctorData?.fullName || doctorData?.name || currentUser?.fullname || currentUser?.username || ''
+    ).trim();
+    if (!rawName) return 'Attending Doctor';
+
+    const role = String(doctorData?.role || '').toUpperCase();
+    const qualifications = Array.isArray(doctorData?.qualifications) ? doctorData.qualifications : [];
+    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
+    const isHealthOfficer =
+      role.includes('HEALTH_OFFICER') ||
+      role === 'HO' ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
+    return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
+  };
+
   const printPrescription = async () => {
     const medicationsToPrint = existingOrders.length > 0
       ? existingOrders.map((order) => ({
@@ -288,8 +337,9 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
       const patientAge = visit?.patient?.dob ? calculateAge(visit.patient.dob) : 'N/A';
       const patientGender = (visit?.patient?.gender || 'N/A').charAt(0).toUpperCase();
       const patientCardNumber = visit?.patient?.id || 'N/A';
-      const doctorName = visit?.doctor?.fullname || 'Dr. Unknown';
-      const doctorQualification = visit?.doctor?.qualifications?.join(', ') || 'General Practitioner';
+      const doctorData = getPrintableDoctorData();
+      const doctorName = getPrintableDoctorName(doctorData);
+      const doctorQualification = getDoctorQualificationLabel(doctorData);
       const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       const visitUid = visit?.visitUid || visit?.id?.toString().substring(0, 8) || 'N/A';
@@ -360,12 +410,17 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
             </div>
             <div class="medications-section">
               <h3>Prescribed Medications</h3>
-              ${medicationsToPrint.map((med, idx) => `
+              ${medicationsToPrint.map((med, idx) => {
+                const displayName = String(med.name || '').trim() || 'Unknown Medication';
+                const rawStrength = String(med.strength || '').trim();
+                const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
+                return `
                 <div class="medication-item">
-                  <div class="medication-name"># ${idx + 1}. ${(formatMedicationName(med.name || '').toUpperCase())}</div>
+                  <div class="medication-name"># ${idx + 1}. ${displayName}${strengthSuffix}</div>
                   ${med.instructions ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${med.instructions}</div>` : ''}
                 </div>
-              `).join('')}
+              `;
+              }).join('')}
             </div>
             <div class="footer">
               <div>
@@ -405,35 +460,43 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
   return (
     <div className="space-y-6">
       <div>
-        <h4 className="font-semibold mb-3" style={{ color: '#0C0E0B' }}>Search Emergency Medications</h4>
+        <h4 className="font-semibold mb-3" style={{ color: '#0C0E0B' }}>Emergency Medication Catalog</h4>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
             type="text"
-            placeholder="Search emergency medication by name..."
+            placeholder="Search by name, code, or description..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        {filteredServices.length > 0 && (
-          <div className="mt-3 border border-gray-200 rounded-lg max-h-64 overflow-y-auto bg-white shadow-sm">
-            {filteredServices.map((service) => (
-              <div
-                key={service.id}
-                className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                onClick={() => addMedicationFromSearch(service)}
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="font-medium text-gray-900">{service.name}</p>
-                    <p className="text-xs text-gray-500">{service.code || 'Emergency Medication'}</p>
+        {filteredServices.length > 0 ? (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredServices.map((service) => {
+              const alreadySelected = selectedMedications.some((med) => med.serviceId === service.id);
+              return (
+                <button
+                  type="button"
+                  key={service.id}
+                  disabled={alreadySelected}
+                  className={`text-left p-3 rounded-lg border transition-all ${alreadySelected ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-blue-200 bg-white hover:bg-blue-50 hover:border-blue-400'}`}
+                  onClick={() => addMedicationFromSearch(service)}
+                >
+                  <p className="font-semibold text-sm">{service.name}</p>
+                  <p className="text-xs mt-1 text-gray-600">{service.description || service.code || 'Emergency medication'}</p>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-xs font-medium text-blue-700">{service.code || 'EMERGENCY_DRUG'}</span>
+                    <span className="text-sm font-bold text-blue-700">{Number(service.price || 0).toFixed(2)} ETB</span>
                   </div>
-                  <span className="text-xs font-semibold text-blue-600">{Number(service.price || 0).toFixed(2)} ETB</span>
-                </div>
-              </div>
-            ))}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-4 p-4 rounded-lg border border-dashed border-gray-300 text-sm text-gray-600">
+            No emergency medications matched your search.
           </div>
         )}
       </div>

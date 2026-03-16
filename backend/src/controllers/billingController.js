@@ -2,6 +2,7 @@ const prisma = require('../config/database');
 const { z } = require('zod');
 const PdfPrinter = require('pdfmake');
 const fs = require('fs');
+const { safeCreatePatient } = require('../utils/prismaCompat');
 
 const fonts = {
   Roboto: {
@@ -12,8 +13,49 @@ const fonts = {
 
 const printer = new PdfPrinter(fonts);
 
+const ETHIOPIAN_BANK_METHODS = [
+  'Commercial Bank of Ethiopia (CBE)',
+  'Awash Bank',
+  'Dashen Bank',
+  'Bank of Abyssinia',
+  'Wegagen Bank',
+  'Nib International Bank',
+  'Cooperative Bank of Oromia',
+  'Hibret Bank',
+  'Abay Bank',
+  'Zemen Bank',
+  'Enat Bank',
+  'Bunna Bank',
+  'Berhan Bank',
+  'Lion International Bank',
+  'Oromia International Bank',
+  'Tsehay Bank',
+  'Siinqee Bank',
+  'Goh Betoch Bank',
+  'Hijra Bank',
+  'Shabelle Bank',
+  'CBE Birr',
+  'Telebirr',
+  'M-Pesa Ethiopia',
+  'Amole Wallet',
+  'HelloCash'
+];
+
 const CARD_REGISTRATION_CODES = ['CARD-REG', 'CARD-REG-DERM'];
 const CARD_ACTIVATION_CODES = ['CARD-ACT', 'CARD-ACT-DERM'];
+
+const isCardRegistrationCode = (code) => {
+  const normalizedCode = String(code || '').toUpperCase();
+  return CARD_REGISTRATION_CODES.includes(normalizedCode) || normalizedCode.startsWith('CARD-REG');
+};
+
+const isCardActivationCode = (code) => {
+  const normalizedCode = String(code || '').toUpperCase();
+  return CARD_ACTIVATION_CODES.includes(normalizedCode) || normalizedCode.startsWith('CARD-ACT');
+};
+
+const isCardRegistrationBilling = (billing) =>
+  (billing?.services || []).some((service) => isCardRegistrationCode(service?.service?.code));
 
 const CARD_REGISTRATION_SERVICE_DEFINITIONS = {
   GENERAL: {
@@ -177,23 +219,21 @@ exports.registerPatient = async (req, res) => {
     const isEmergency = type === 'EMERGENCY';
 
     const patient = await generateUniquePatientId(async (patientId) => {
-      return await prisma.patient.create({
-        data: {
-          id: patientId,
-          name,
-          type,
-          dob: dob ? new Date(dob) : null,
-          gender,
-          mobile,
-          email,
-          address,
-          emergencyContact,
-          bloodType,
-          maritalStatus,
-          cardType: normalizedCardType,
-          insuranceId,
-          status: 'Active'
-        }
+      return await safeCreatePatient(prisma, {
+        id: patientId,
+        name,
+        type,
+        dob: dob ? new Date(dob) : null,
+        gender,
+        mobile,
+        email,
+        address,
+        emergencyContact,
+        bloodType,
+        maritalStatus,
+        cardType: normalizedCardType,
+        insuranceId,
+        status: 'Active'
       });
     }, prisma, isEmergency);
 
@@ -238,6 +278,17 @@ exports.registerPatient = async (req, res) => {
       billing
     });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getOldPatientRegistrationMode = async (req, res) => {
+  try {
+    const systemSettingsController = require('./systemSettingsController');
+    const enabled = await systemSettingsController.getOldPatientRegistrationMode();
+    res.json({ enabled });
+  } catch (error) {
+    console.error('Error fetching old patient registration mode:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -681,14 +732,106 @@ exports.getInsurances = async (req, res) => {
   }
 };
 
+exports.uploadPaymentProof = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No payment proof file uploaded' });
+    }
+
+    const normalizedPath = `/${String(req.file.path || '').replace(/\\/g, '/')}`;
+    res.json({
+      message: 'Payment proof uploaded successfully',
+      file: {
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        path: normalizedPath
+      }
+    });
+  } catch (error) {
+    console.error('Error uploading payment proof:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getBankMethodSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const where = { type: 'BANK' };
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(`${startDate}T00:00:00`);
+      }
+      if (endDate) {
+        where.createdAt.lte = new Date(`${endDate}T23:59:59.999`);
+      }
+    }
+
+    const bankPayments = await prisma.billPayment.findMany({
+      where,
+      select: {
+        id: true,
+        amount: true,
+        bankName: true,
+        transNumber: true,
+        createdAt: true,
+        patient: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const bucketMap = new Map();
+    bankPayments.forEach((payment) => {
+      const key = (payment.bankName || 'Unspecified Bank').trim();
+      const entry = bucketMap.get(key) || {
+        bankName: key,
+        transactions: 0,
+        amount: 0,
+        latestPaymentAt: null
+      };
+
+      entry.transactions += 1;
+      entry.amount += payment.amount || 0;
+      if (!entry.latestPaymentAt || new Date(payment.createdAt) > new Date(entry.latestPaymentAt)) {
+        entry.latestPaymentAt = payment.createdAt;
+      }
+      bucketMap.set(key, entry);
+    });
+
+    const banks = Array.from(bucketMap.values()).sort((a, b) => b.amount - a.amount);
+    const summary = {
+      totalBankTransactions: bankPayments.length,
+      totalBankAmount: bankPayments.reduce((sum, item) => sum + (item.amount || 0), 0),
+      totalBanks: banks.length
+    };
+
+    res.json({
+      summary,
+      banks,
+      supportedMethods: ETHIOPIAN_BANK_METHODS
+    });
+  } catch (error) {
+    console.error('Error getting bank method summary:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.processPayment = async (req, res) => {
   try {
     console.log('Payment request body:', JSON.stringify(req.body, null, 2));
     // Remove Zod validation completely for testing
-    const { billingId, amount, type, bankName, transNumber, insuranceId, notes, isEmergency } = req.body;
+    const { billingId, amount, type, bankName, transNumber, insuranceId, notes, paymentProofPath, isEmergency, waiveRegistrationForOldPatient } = req.body;
 
     // Convert amount to number if it's a string
-    const numericAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+    let numericAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
     console.log('Amount conversion:', { original: amount, converted: numericAmount });
 
     // Get billing with all related data
@@ -721,6 +864,93 @@ exports.processPayment = async (req, res) => {
       return res.status(400).json({ error: 'Billing already paid' });
     }
 
+    const systemSettingsController = require('./systemSettingsController');
+    const oldPatientModeEnabled = await systemSettingsController.getOldPatientRegistrationMode();
+    const isCardRegBilling = isCardRegistrationBilling(billing);
+    const isZeroAmountRequest = Number(numericAmount) === 0;
+
+    // Resilient handling: in old-patient mode, card registration payments of 0 are waiver payments
+    // even if frontend did not send the waiver flag.
+    const shouldWaiveRegistration = Boolean(
+      waiveRegistrationForOldPatient ||
+      (
+        oldPatientModeEnabled &&
+        isCardRegBilling &&
+        isZeroAmountRequest &&
+        (billing.paidAmount || 0) === 0 &&
+        billing.payments.length === 0
+      )
+    );
+
+    const mergedNotes = [
+      notes,
+      paymentProofPath ? `Payment Proof: ${paymentProofPath}` : null,
+      shouldWaiveRegistration ? 'Old patient migration waiver applied at payment' : null
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    if (isZeroAmountRequest && isCardRegBilling && !shouldWaiveRegistration) {
+      return res.status(400).json({
+        error: 'Zero amount is only allowed when old-patient registration waiver is enabled for card registration'
+      });
+    }
+
+    if (shouldWaiveRegistration) {
+      if (!oldPatientModeEnabled) {
+        return res.status(400).json({ error: 'Old patient registration mode is disabled' });
+      }
+
+      if (!isCardRegBilling) {
+        return res.status(400).json({ error: 'This billing is not a card registration billing' });
+      }
+
+      const hasPositiveExistingPayments = (billing.payments || []).some((payment) => Number(payment.amount || 0) > 0);
+      if ((billing.paidAmount || 0) > 0 || hasPositiveExistingPayments) {
+        return res.status(400).json({ error: 'This registration billing already has payments and cannot be waived' });
+      }
+
+      const registrationServiceIds = billing.services
+        .filter((service) => isCardRegistrationCode(service?.service?.code))
+        .map((service) => service.serviceId);
+
+      await prisma.$transaction(async (tx) => {
+        await tx.billingService.updateMany({
+          where: {
+            billingId,
+            serviceId: { in: registrationServiceIds }
+          },
+          data: {
+            unitPrice: 0,
+            totalPrice: 0
+          }
+        });
+
+        await tx.billing.update({
+          where: { id: billingId },
+          data: {
+            totalAmount: 0,
+            notes: [billing.notes, 'old patient migration waiver'].filter(Boolean).join(' - ')
+          }
+        });
+      });
+
+      billing.totalAmount = 0;
+      billing.notes = [billing.notes, 'old patient migration waiver'].filter(Boolean).join(' - ');
+      billing.services = billing.services.map((service) => {
+        if (!isCardRegistrationCode(service?.service?.code)) {
+          return service;
+        }
+
+        return {
+          ...service,
+          unitPrice: 0,
+          totalPrice: 0
+        };
+      });
+      numericAmount = 0;
+    }
+
     // Check if there's already a payment being processed (prevent double-click)
     const existingPayment = await prisma.billPayment.findFirst({
       where: {
@@ -730,7 +960,9 @@ exports.processPayment = async (req, res) => {
       }
     });
 
-    if (existingPayment) {
+    const canTreatAsIdempotentWaiver = Boolean(shouldWaiveRegistration && Number(numericAmount) === 0);
+
+    if (existingPayment && !canTreatAsIdempotentWaiver) {
       return res.status(400).json({ error: 'Payment already processed' });
     }
 
@@ -788,30 +1020,33 @@ exports.processPayment = async (req, res) => {
     }
 
     // Handle account deduction or debt creation
-    const payment = await prisma.$transaction(async (tx) => {
-      // Create primary payment (Cash/Bank/Insurance)
-      const mainPayment = await tx.billPayment.create({
-        data: {
-          billingId,
-          patientId: billing.patientId,
-          amount: numericAmount,
-          type,
-          bankName,
-          transNumber,
-          insuranceId,
-          notes: notes || (convertToDebt ? 'Partial payment' : null)
-        }
-      });
+    let payment = existingPayment;
 
-      // Update billing paid amount
-      await tx.billing.update({
-        where: { id: billingId },
-        data: {
-          paidAmount: {
-            increment: numericAmount
+    if (!existingPayment) {
+      payment = await prisma.$transaction(async (tx) => {
+        // Create primary payment (Cash/Bank/Insurance)
+        const mainPayment = await tx.billPayment.create({
+          data: {
+            billingId,
+            patientId: billing.patientId,
+            amount: numericAmount,
+            type,
+            bankName,
+            transNumber: transNumber || null,
+            insuranceId,
+            notes: mergedNotes || (convertToDebt ? 'Partial payment' : null)
           }
-        }
-      });
+        });
+
+        // Update billing paid amount
+        await tx.billing.update({
+          where: { id: billingId },
+          data: {
+            paidAmount: {
+              increment: numericAmount
+            }
+          }
+        });
 
       // If there's a remaining balance and we should convert to debt
       if (convertToDebt && remainingBalance > numericAmount) {
@@ -870,8 +1105,9 @@ exports.processPayment = async (req, res) => {
         });
       }
 
-      return mainPayment;
-    });
+        return mainPayment;
+      });
+    }
 
     // If this is an insurance payment, create insurance transactions for each service
     if (type === 'INSURANCE' && insuranceId) {
@@ -952,6 +1188,7 @@ exports.processPayment = async (req, res) => {
           bankName,
           transNumber,
           notes,
+          paymentProofPath,
           isEmergency,
           processedBy: req.user.fullname || req.user.username
         }),
@@ -1072,10 +1309,10 @@ exports.processPayment = async (req, res) => {
 
       // Check if this is card activation billing (for automatic card activation)
       const isCardActivation = billing.services.some(service =>
-        CARD_ACTIVATION_CODES.includes(service.service.code)
+        isCardActivationCode(service.service.code)
       );
       const isCardRegistration = billing.services.some(service =>
-        CARD_REGISTRATION_CODES.includes(service.service.code)
+        isCardRegistrationCode(service.service.code)
       );
 
       // Automatically activate card after payment for card registration or activation

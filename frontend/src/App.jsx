@@ -8,6 +8,7 @@ import Layout from './components/common/Layout';
 import LoginPage from './pages/LoginPage';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import DiseaseReports from './pages/admin/DiseaseReports';
+import SelectedDiseaseReportPage from './pages/admin/SelectedDiseaseReportPage';
 import AgeGenderDiseaseDistribution from './pages/admin/AgeGenderDiseaseDistribution';
 import AdminLabReports from './pages/admin/AdminLabReports';
 import PatientRegistration from './pages/patient/PatientRegistration';
@@ -147,6 +148,15 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute allowedRoles={['ADMIN', 'DOCTOR']}>
               <AgeGenderDiseaseDistribution />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin/selected-disease-report"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN', 'DOCTOR']}>
+              <SelectedDiseaseReportPage />
             </ProtectedRoute>
           }
         />

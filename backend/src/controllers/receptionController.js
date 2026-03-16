@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { z } = require('zod');
+const { safeCreatePatient } = require('../utils/prismaCompat');
 
 // Validation schemas
 const createPatientSchema = z.object({
@@ -282,27 +283,25 @@ exports.createPatient = async (req, res) => {
     const isEmergency = validatedData.type === 'EMERGENCY';
 
     const patient = await generateUniquePatientId(async (patientId) => {
-      return await prisma.patient.create({
-        data: {
-          id: patientId,
-          name: validatedData.name,
-          dob: validatedData.dob ? new Date(validatedData.dob) : null,
-          gender: validatedData.gender || null,
-          type: validatedData.type,
-          cardType: validatedData.cardType || 'GENERAL',
-          mobile: validatedData.mobile || null,
-          email: validatedData.email || null,
-          address: validatedData.address || null,
-          region: validatedData.region || null,
-          zone: validatedData.zone || null,
-          woreda: validatedData.woreda || null,
-          kebele: validatedData.kebele || null,
-          nationalId: validatedData.nationalId || null,
-          emergencyContact: validatedData.emergencyContact || null,
-          bloodType: validatedData.bloodType || null,
-          maritalStatus: validatedData.maritalStatus || null,
-          insuranceId: validatedData.insuranceId || null
-        }
+      return await safeCreatePatient(prisma, {
+        id: patientId,
+        name: validatedData.name,
+        dob: validatedData.dob ? new Date(validatedData.dob) : null,
+        gender: validatedData.gender || null,
+        type: validatedData.type,
+        cardType: validatedData.cardType || 'GENERAL',
+        mobile: validatedData.mobile || null,
+        email: validatedData.email || null,
+        address: validatedData.address || null,
+        region: validatedData.region || null,
+        zone: validatedData.zone || null,
+        woreda: validatedData.woreda || null,
+        kebele: validatedData.kebele || null,
+        nationalId: validatedData.nationalId || null,
+        emergencyContact: validatedData.emergencyContact || null,
+        bloodType: validatedData.bloodType || null,
+        maritalStatus: validatedData.maritalStatus || null,
+        insuranceId: validatedData.insuranceId || null
       });
     }, prisma, isEmergency);
 

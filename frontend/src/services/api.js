@@ -39,10 +39,28 @@ const api = axios.create({
   withCredentials: true,
 });
 
+const getStoredToken = () => sessionStorage.getItem('token') || localStorage.getItem('token');
+const getStoredRefreshToken = () => sessionStorage.getItem('refreshToken') || localStorage.getItem('refreshToken');
+
+const persistToken = (token) => {
+  if (!token) return;
+  sessionStorage.setItem('token', token);
+  localStorage.setItem('token', token);
+};
+
+const clearStoredAuth = () => {
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('refreshToken');
+  sessionStorage.removeItem('user');
+  localStorage.removeItem('token');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('user');
+};
+
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    const token = sessionStorage.getItem('token');
+    const token = getStoredToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -63,24 +81,30 @@ api.interceptors.response.use(
       originalRequest._retry = true;
 
       try {
-        const refreshToken = sessionStorage.getItem('refreshToken');
+        const refreshToken = getStoredRefreshToken();
         if (refreshToken) {
           const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
             refreshToken
           });
 
           const { token } = response.data;
-          sessionStorage.setItem('token', token);
+          persistToken(token);
 
           // Retry original request
           originalRequest.headers.Authorization = `Bearer ${token}`;
           return api(originalRequest);
         }
+
+        clearStoredAuth();
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       } catch (refreshError) {
         // Refresh failed, redirect to login
-        sessionStorage.removeItem('token');
-        sessionStorage.removeItem('refreshToken');
-        window.location.href = '/login';
+        clearStoredAuth();
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
     }
 

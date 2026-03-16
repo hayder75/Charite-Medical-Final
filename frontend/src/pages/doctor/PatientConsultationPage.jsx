@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown } from 'lucide-react';
+import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Beaker, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown } from 'lucide-react';
 import { getImageUrl } from '../../utils/imageUrl';
 import { checkValueInNormalRange } from '../../utils/normalRangeParser';
 import DentalChart from '../../components/dental/DentalChart';
@@ -20,7 +20,16 @@ import EmergencyDrugOrdering from '../../components/doctor/EmergencyDrugOrdering
 import ProcedureOrdering from '../../components/doctor/ProcedureOrdering';
 import MaterialNeedsOrdering from '../../components/nurse/MaterialNeedsOrdering';
 import AccommodationTab from '../../components/doctor/AccommodationTab';
+import CompoundPrescriptionBuilder from '../../components/doctor/CompoundPrescriptionBuilder';
 import Layout from '../../components/common/Layout';
+import {
+  DEFAULT_DOCTOR_WORKSPACE_CONFIG,
+  getAllowedDoctorTabs,
+  getLocalDateInputValue,
+  normalizeDoctorWorkspaceConfig
+} from '../../utils/doctorWorkspace';
+
+const getConsultationCacheKey = (doctorScope, visitId) => `doctor-consultation-cache:${doctorScope || 'unknown'}:${visitId || 'unknown'}`;
 
 const NOTE_FIELDS = [
   { key: 'chiefComplaint', label: 'Chief Complaint' },
@@ -36,6 +45,54 @@ const NOTE_FIELDS = [
   { key: 'additional', label: 'Additional Notes' },
   { key: 'prognosis', label: 'Prognosis' }
 ];
+const createInitialDoctorTriageForm = () => ({
+  bloodPressure: '',
+  temperature: '',
+  heartRate: '',
+  height: '',
+  weight: '',
+  oxygenSaturation: '',
+  condition: '',
+  notes: '',
+  generalAppearanceStatus: 'NOT_ASSESSED',
+  generalAppearance: '',
+  skinStatus: 'NOT_ASSESSED',
+  skinBodyRegions: [],
+  skinFindings: '',
+  headAndNeckStatus: 'NOT_ASSESSED',
+  headAndNeck: '',
+  cardiovascularStatus: 'NOT_ASSESSED',
+  cardiovascularExam: '',
+  respiratoryStatus: 'NOT_ASSESSED',
+  respiratoryExam: '',
+  abdominalStatus: 'NOT_ASSESSED',
+  abdominalExam: '',
+  extremitiesStatus: 'NOT_ASSESSED',
+  extremities: '',
+  neurologicalStatus: 'NOT_ASSESSED',
+  neurologicalExam: '',
+  doctorAlertFlag: false,
+  doctorAlertSummary: ''
+});
+
+const formatAssessmentText = (status, value, extras = []) => {
+  const cleanValue = (value || '').trim();
+  const cleanExtras = extras.map((item) => String(item || '').trim()).filter(Boolean);
+  const hasAnyContent = cleanValue || cleanExtras.length > 0;
+
+  if (!hasAnyContent && (!status || status === 'NOT_ASSESSED')) return '';
+
+  const lines = [];
+  if (status && status !== 'NOT_ASSESSED') {
+    lines.push(`Status: ${status}`);
+  }
+  cleanExtras.forEach((item) => lines.push(item));
+  if (cleanValue) {
+    lines.push(cleanValue);
+  }
+
+  return lines.join('\n');
+};
 
 const NoteDisplayWithEdit = ({ note, visitId, onUpdate }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -155,13 +212,23 @@ const NoteDisplayWithEdit = ({ note, visitId, onUpdate }) => {
 const PatientConsultationPage = () => {
   const { visitId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user: currentUser, loading: authLoading } = useAuth();
+  const modeParam = String(searchParams.get('mode') || '').toLowerCase();
+  const consultationMode = modeParam === 'completed'
+    ? 'completed'
+    : modeParam === 'triage'
+      ? 'triage'
+      : 'active';
+  const isCompletedMode = consultationMode === 'completed';
   const [loading, setLoading] = useState(true);
   const [visit, setVisit] = useState(null);
   const [allVitals, setAllVitals] = useState([]); // All vitals for this visit
   const [activeTab, setActiveTab] = useState('vitals');
   const [dentalRecord, setDentalRecord] = useState(null);
   const dentalChartRef = useRef(null);
+  const [workspaceConfig, setWorkspaceConfig] = useState(DEFAULT_DOCTOR_WORKSPACE_CONFIG);
+  const [workspaceProfile, setWorkspaceProfile] = useState('general');
 
   // Get latest vitals and nurse vitals for display
   const nurseVitals = allVitals.find(v => v.recordedByRole === 'NURSE');
@@ -172,21 +239,14 @@ const PatientConsultationPage = () => {
   const [patientHistory, setPatientHistory] = useState(null);
   const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
   const [selectedHistoryVisitId, setSelectedHistoryVisitId] = useState(null);
+  const [historyMedicationPrintDate, setHistoryMedicationPrintDate] = useState(() => getLocalDateInputValue());
+  const [historyCompoundPrintDate, setHistoryCompoundPrintDate] = useState(() => getLocalDateInputValue());
   const [historyTab, setHistoryTab] = useState('visits');
   const [showPatientSummary, setShowPatientSummary] = useState(true);
   const [visitDetailTab, setVisitDetailTab] = useState('summary'); // summary, vitals, labs, radiology, medications, procedures, notes, images
 
   // Triage form state
-  const [triageForm, setTriageForm] = useState({
-    bloodPressure: '',
-    temperature: '',
-    heartRate: '',
-    height: '',
-    weight: '',
-    oxygenSaturation: '',
-    condition: '',
-    notes: ''
-  });
+  const [triageForm, setTriageForm] = useState(createInitialDoctorTriageForm);
   const [recordingTriage, setRecordingTriage] = useState(false);
 
   // ImageViewer state
@@ -243,6 +303,55 @@ const PatientConsultationPage = () => {
     return currentUser?.role === 'DERMATOLOGY' || qualifications.some((q) => q.includes('DERM'));
   }, [currentUser]);
 
+  const getDoctorQualificationLabel = (doctorData) => {
+    const role = String(doctorData?.role || '').toUpperCase();
+    const qualifications = Array.isArray(doctorData?.qualifications)
+      ? doctorData.qualifications
+      : [];
+    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
+
+    const isHealthOfficer =
+      role.includes('HEALTH_OFFICER') ||
+      role === 'HO' ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (isHealthOfficer) {
+      return 'Health Officer (HO)';
+    }
+
+    if (role.includes('DERM') || normalizedQualifications.some((q) => q.includes('DERM'))) {
+      return 'Dermato-venereologist';
+    }
+
+    return qualifications.join(', ') || 'General Practitioner';
+  };
+
+  const escapeHtml = (value) => String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  const doctorCacheScope = useMemo(
+    () => currentUser?.id || currentUser?.userId || currentUser?.username || 'unknown',
+    [currentUser]
+  );
+
+  const consultationCacheKey = useMemo(
+    () => getConsultationCacheKey(doctorCacheScope, visitId),
+    [doctorCacheScope, visitId]
+  );
+
+  const allowedTabIds = useMemo(
+    () => new Set(getAllowedDoctorTabs(workspaceConfig, workspaceProfile, consultationMode)),
+    [consultationMode, workspaceConfig, workspaceProfile]
+  );
+  const canAccessDentalFeatures = useMemo(
+    () => isDentalSpecialist || allowedTabIds.has('dental') || allowedTabIds.has('dental-services'),
+    [allowedTabIds, isDentalSpecialist]
+  );
+
   // Memoize tabs array to prevent recreation on every render
   // Order: triage → vitals → patient-history → images → dental chart → dental services (only for dentists) → diagnosis notes → medication → emergency drugs → material needs → lab → radiology → nurse services
   const tabs = useMemo(() => {
@@ -252,10 +361,11 @@ const PatientConsultationPage = () => {
       { id: 'patient-history', label: 'Patient History', icon: User },
       { id: 'images', label: 'Attached Images', icon: Image },
       { id: 'procedures', label: 'Procedures', icon: Activity },
-      ...(isDentalSpecialist ? [{ id: 'dental', label: 'Dental Chart', icon: Smile }] : []),
-      ...(isDentalSpecialist ? [{ id: 'dental-services', label: 'Dental Services', icon: Smile }] : []), // Only show for dental specialists
+      { id: 'dental', label: 'Dental Chart', icon: Smile },
+      { id: 'dental-services', label: 'Dental Services', icon: Smile },
       { id: 'notes', label: 'Diagnosis Notes', icon: FileText },
       { id: 'medications', label: 'Medications', icon: Pill },
+      { id: 'compound-prescription', label: 'Compound Rx', icon: Beaker },
       { id: 'emergency-drugs', label: 'Emergency Drugs', icon: AlertTriangle },
       { id: 'material-needs', label: 'Material Needs', icon: Package },
       { id: 'lab', label: 'Lab Orders', icon: TestTube },
@@ -263,9 +373,10 @@ const PatientConsultationPage = () => {
       { id: 'nurse-services', label: 'Nurse Services', icon: Stethoscope },
       { id: 'accommodation', label: 'Accommodation', icon: Bed }
     ];
-    console.debug('[Consultation] tabs array created:', tabsArray.map(t => t.id));
-    return tabsArray;
-  }, [isDentalSpecialist]);
+    const visibleTabs = tabsArray.filter((tab) => allowedTabIds.has(tab.id));
+    console.debug('[Consultation] tabs array created:', visibleTabs.map(t => t.id));
+    return visibleTabs;
+  }, [allowedTabIds]);
 
   // Debug: track tab changes and visit load
   useEffect(() => {
@@ -276,6 +387,48 @@ const PatientConsultationPage = () => {
     console.debug('[Consultation] useEffect 2 - fetchVisitData called for visitId:', visitId);
     fetchVisitData();
   }, [visitId]);
+
+  useEffect(() => {
+    const fetchWorkspaceSettings = async () => {
+      try {
+        const response = await api.get('/doctors/workspace-settings');
+        setWorkspaceConfig(normalizeDoctorWorkspaceConfig(response.data.workspaceConfig));
+        setWorkspaceProfile(response.data.profile || 'general');
+      } catch (error) {
+        console.error('Error fetching consultation workspace settings:', error);
+      }
+    };
+
+    fetchWorkspaceSettings();
+  }, []);
+
+  // Hydrate from session cache first to keep consultation data visible on browser refresh.
+  useEffect(() => {
+    try {
+      if (!visitId) return;
+
+      const candidateKeys = [
+        consultationCacheKey,
+        getConsultationCacheKey('unknown', visitId),
+        getConsultationCacheKey(currentUser?.id, visitId)
+      ].filter(Boolean);
+
+      const raw = candidateKeys.map((k) => sessionStorage.getItem(k)).find(Boolean);
+      if (!raw) return;
+
+      const cached = JSON.parse(raw);
+      if (!cached?.visit) return;
+
+      setVisit(cached.visit);
+      setAllVitals(Array.isArray(cached.vitals) ? cached.vitals : []);
+      if (cached.dentalRecord) {
+        setDentalRecord(cached.dentalRecord);
+      }
+      setLoading(false);
+    } catch (cacheError) {
+      console.warn('[Consultation] Failed to restore session cache:', cacheError);
+    }
+  }, [consultationCacheKey, currentUser?.id, visitId]);
 
   // If current activeTab is not available for this user, switch to the first available tab
   useEffect(() => {
@@ -294,6 +447,7 @@ const PatientConsultationPage = () => {
     if (activeTab === 'triage' && nurseVitals) {
       // Pre-fill form with nurse vitals for reference
       setTriageForm({
+        ...createInitialDoctorTriageForm(),
         bloodPressure: nurseVitals.bloodPressure || '',
         temperature: nurseVitals.temperature ? nurseVitals.temperature.toString() : '',
         heartRate: nurseVitals.heartRate ? nurseVitals.heartRate.toString() : '',
@@ -301,20 +455,18 @@ const PatientConsultationPage = () => {
         weight: nurseVitals.weight ? nurseVitals.weight.toString() : '',
         oxygenSaturation: nurseVitals.oxygenSaturation || nurseVitals.spo2 ? (nurseVitals.oxygenSaturation || nurseVitals.spo2).toString() : '',
         condition: nurseVitals.condition || '',
-        notes: nurseVitals.notes || ''
+        notes: nurseVitals.notes || '',
+        generalAppearance: nurseVitals.generalAppearance || '',
+        headAndNeck: nurseVitals.headAndNeck || '',
+        cardiovascularExam: nurseVitals.cardiovascularExam || '',
+        respiratoryExam: nurseVitals.respiratoryExam || '',
+        abdominalExam: nurseVitals.abdominalExam || '',
+        extremities: nurseVitals.extremities || '',
+        neurologicalExam: nurseVitals.neurologicalExam || ''
       });
     } else if (activeTab === 'triage' && !nurseVitals) {
       // Reset form if no nurse vitals exist
-      setTriageForm({
-        bloodPressure: '',
-        temperature: '',
-        heartRate: '',
-        height: '',
-        weight: '',
-        oxygenSaturation: '',
-        condition: '',
-        notes: ''
-      });
+      setTriageForm(createInitialDoctorTriageForm());
     }
   }, [activeTab, nurseVitals]);
 
@@ -358,12 +510,33 @@ const PatientConsultationPage = () => {
         return;
       }
 
-      setVisit(response.data);
+      const normalizedVisit = {
+        ...response.data,
+        // Protect against occasional partial payloads on reload where patient relation may be missing.
+        patient: response.data?.patient || visit?.patient || null
+      };
+
+      // If still missing patient object, fetch patient summary and attach it before render/cache.
+      if (!normalizedVisit.patient && normalizedVisit.patientId) {
+        try {
+          const historyRes = await api.get(`/doctors/patient-history/${normalizedVisit.patientId}`);
+          if (historyRes?.data?.patient) {
+            normalizedVisit.patient = {
+              ...historyRes.data.patient,
+              mobile: historyRes.data.patient.phone || historyRes.data.patient.mobile
+            };
+          }
+        } catch (historyErr) {
+          console.warn('[Consultation] Could not hydrate patient from history:', historyErr?.message || historyErr);
+        }
+      }
+
+      setVisit(normalizedVisit);
 
       // Set all vitals from the visit data (already included)
       // Sort by createdAt descending to get most recent first
-      if (response.data.vitals && response.data.vitals.length > 0) {
-        const sortedVitals = [...response.data.vitals].sort((a, b) =>
+      if (normalizedVisit.vitals && normalizedVisit.vitals.length > 0) {
+        const sortedVitals = [...normalizedVisit.vitals].sort((a, b) =>
           new Date(b.createdAt) - new Date(a.createdAt)
         );
         setAllVitals(sortedVitals);
@@ -377,7 +550,7 @@ const PatientConsultationPage = () => {
       // Fetch dental record if user is a dentist
       if (currentUser?.qualifications?.includes('Dentist')) {
         try {
-          const dentalResponse = await api.get(`/dental/records/${response.data.patientId}/${visitId}`);
+          const dentalResponse = await api.get(`/dental/records/${normalizedVisit.patientId}/${visitId}`);
           setDentalRecord(dentalResponse.data.dentalRecord);
         } catch (error) {
           if (error.response?.status === 404) {
@@ -388,6 +561,22 @@ const PatientConsultationPage = () => {
             // Don't show error toast for dental records as 404 is expected
           }
         }
+      }
+
+      // Persist latest consultation snapshot per doctor+visit to survive refresh.
+      try {
+        const snapshot = {
+          visit: normalizedVisit,
+          vitals: normalizedVisit?.vitals || [],
+          dentalRecord,
+          savedAt: Date.now()
+        };
+        // Persist only meaningful snapshots to avoid overwriting good cache with patient-less payloads.
+        if (snapshot.visit?.id && snapshot.visit?.patient) {
+          sessionStorage.setItem(consultationCacheKey, JSON.stringify(snapshot));
+        }
+      } catch (cacheError) {
+        console.warn('[Consultation] Failed to persist cache:', cacheError);
       }
 
     } catch (error) {
@@ -402,7 +591,12 @@ const PatientConsultationPage = () => {
         toast.error('Access denied to this visit');
         navigate('/doctor/dashboard');
       } else {
-        toast.error('Failed to load patient data');
+        // Keep current cached data on transient failures instead of showing blank N/A state.
+        if (!visit) {
+          toast.error('Failed to load patient data');
+        } else {
+          toast.error('Network issue: showing last loaded patient data');
+        }
       }
     } finally {
       setLoading(false);
@@ -440,6 +634,59 @@ const PatientConsultationPage = () => {
       if (triageForm.oxygenSaturation) vitalsPayload.oxygenSaturation = parseInt(triageForm.oxygenSaturation);
       if (triageForm.condition) vitalsPayload.condition = triageForm.condition;
       if (triageForm.notes) vitalsPayload.notes = triageForm.notes;
+
+      const generalAppearanceText = formatAssessmentText(
+        triageForm.generalAppearanceStatus,
+        triageForm.generalAppearance
+      );
+      const skinAndExtremitiesText = formatAssessmentText(
+        triageForm.skinStatus,
+        triageForm.skinFindings,
+        [
+          triageForm.skinBodyRegions?.length
+            ? `Body Regions: ${triageForm.skinBodyRegions.join(', ')}`
+            : '',
+          formatAssessmentText(triageForm.extremitiesStatus, triageForm.extremities)
+        ]
+      );
+      const headAndNeckText = formatAssessmentText(
+        triageForm.headAndNeckStatus,
+        triageForm.headAndNeck
+      );
+      const cardiovascularText = formatAssessmentText(
+        triageForm.cardiovascularStatus,
+        triageForm.cardiovascularExam
+      );
+      const respiratoryText = formatAssessmentText(
+        triageForm.respiratoryStatus,
+        triageForm.respiratoryExam
+      );
+      const abdominalText = formatAssessmentText(
+        triageForm.abdominalStatus,
+        triageForm.abdominalExam
+      );
+      const neuroText = formatAssessmentText(
+        triageForm.neurologicalStatus,
+        triageForm.neurologicalExam
+      );
+
+      if (generalAppearanceText) vitalsPayload.generalAppearance = generalAppearanceText;
+      if (headAndNeckText) vitalsPayload.headAndNeck = headAndNeckText;
+      if (cardiovascularText) vitalsPayload.cardiovascularExam = cardiovascularText;
+      if (respiratoryText) vitalsPayload.respiratoryExam = respiratoryText;
+      if (abdominalText) vitalsPayload.abdominalExam = abdominalText;
+      if (skinAndExtremitiesText) vitalsPayload.extremities = skinAndExtremitiesText;
+      if (neuroText) vitalsPayload.neurologicalExam = neuroText;
+
+      if (triageForm.doctorAlertFlag || triageForm.doctorAlertSummary?.trim()) {
+        const existingNotes = vitalsPayload.notes ? `${vitalsPayload.notes}\n\n` : '';
+        const doctorAlertBlock = [
+          '[Doctor Alert]',
+          `Flagged: ${triageForm.doctorAlertFlag ? 'YES' : 'NO'}`,
+          `Summary: ${(triageForm.doctorAlertSummary || '').trim() || 'Not provided'}`
+        ].join('\n');
+        vitalsPayload.notes = `${existingNotes}${doctorAlertBlock}`;
+      }
 
       await api.post('/nurses/vitals', vitalsPayload);
       toast.success('Doctor vitals added successfully');
@@ -575,6 +822,9 @@ const PatientConsultationPage = () => {
 
   // Complete Visit Functions
   const handleCompleteVisit = () => {
+    if (isCompletedMode) {
+      return;
+    }
     // Show custom confirmation modal
     setCountAsMedicalTreated(false);
     setShowCompleteConfirmModal(true);
@@ -644,6 +894,179 @@ const PatientConsultationPage = () => {
       console.error('Error deleting medication:', error);
       toast.error(error.response?.data?.error || 'Failed to delete medication');
     }
+  };
+
+  const getPrintableDoctorData = (historyVisit) => {
+    return historyVisit?.doctor || visit?.doctor || currentUser || {};
+  };
+
+  const getPrintableDoctorName = (doctorData) => {
+    const rawName = String(
+      doctorData?.fullname || doctorData?.fullName || doctorData?.name || currentUser?.fullname || currentUser?.username || ''
+    ).trim();
+    if (!rawName) return 'Attending Doctor';
+
+    const role = String(doctorData?.role || '').toUpperCase();
+    const qualifications = Array.isArray(doctorData?.qualifications) ? doctorData.qualifications : [];
+    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
+    const isHealthOfficer =
+      role.includes('HEALTH_OFFICER') ||
+      role === 'HO' ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
+    return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
+  };
+
+  const printHistoryMedicationReprint = (historyVisit, printDate) => {
+    if (!historyVisit?.medicationOrders?.length) {
+      toast.error('No medications found for selected date');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Popup blocked! Please allow popups for this site.');
+      return;
+    }
+
+    const patientData = patientHistory?.patient || visit?.patient || {};
+  const doctorData = getPrintableDoctorData(historyVisit);
+  const doctorName = getPrintableDoctorName(doctorData);
+    const doctorQualification = getDoctorQualificationLabel(doctorData);
+    const visitDate = new Date(historyVisit.createdAt || historyVisit.updatedAt || Date.now());
+  const printedAt = printDate ? new Date(`${printDate}T12:00:00`) : new Date();
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Medication Reprint - ${escapeHtml(patientData.name || 'Patient')}</title>
+          <style>
+            @media print { @page { size: A6; margin: 0 !important; } .no-print { display: none !important; } }
+            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 16px; color: #111827; background: #f8fafc; }
+            .sheet { width: 105mm; min-height: 148mm; margin: 0 auto; background: #fff; padding: 8mm; box-sizing: border-box; box-shadow: 0 8px 18px rgba(15,23,42,0.15); }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #1d4ed8; padding-bottom: 8px; margin-bottom: 10px; }
+            .title { font-size: 14px; font-weight: 700; text-transform: uppercase; color: #1e3a8a; }
+            .meta { font-size: 10px; color: #475569; text-align: right; }
+            .patient { font-size: 11px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; margin-bottom: 10px; }
+            .item { border-bottom: 1px dashed #cbd5e1; padding: 6px 0; }
+            .name { font-size: 12px; font-weight: 700; }
+            .instruction { font-size: 11px; color: #334155; margin-top: 3px; }
+            .footer { margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 10px; display: flex; justify-content: space-between; }
+            .no-print { text-align: center; margin-bottom: 12px; }
+            .no-print button { border: none; background: #2563eb; color: white; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
+          </style>
+        </head>
+        <body>
+          <div class="no-print"><button onclick="window.print()">Print Refill Copy</button></div>
+          <div class="sheet">
+            <div class="header">
+              <div class="title">Medication Reprint</div>
+              <div class="meta">Visit: ${visitDate.toLocaleDateString()}<br>Reprint: ${printedAt.toLocaleString()}</div>
+            </div>
+            <div class="patient">
+              <div><strong>Patient:</strong> ${escapeHtml(String(patientData.name || 'N/A').toUpperCase())}</div>
+              <div><strong>Card No:</strong> #${escapeHtml(patientData.id || 'N/A')}</div>
+              <div><strong>Visit ID:</strong> #${escapeHtml(historyVisit.visitUid || historyVisit.id)}</div>
+            </div>
+            ${historyVisit.medicationOrders.map((med, idx) => {
+              const name = escapeHtml(med.name || 'Medication');
+              const instruction = escapeHtml((med.instructionText || med.instructions || '').trim());
+              return `
+                <div class="item">
+                  <div class="name">${idx + 1}. ${name}</div>
+                  ${instruction ? `<div class="instruction">${instruction}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+            <div class="footer">
+              <div>
+                Prescribed by: <strong>${escapeHtml(doctorName)}</strong><br>
+                ${escapeHtml(doctorQualification)}
+              </div>
+              <div style="border-top: 1px solid #334155; padding-top: 4px; width: 96px; text-align: center;">Signature</div>
+            </div>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const printHistoryCompoundReprint = (historyVisit, printDate) => {
+    if (!historyVisit?.compoundPrescriptions?.length) {
+      toast.error('No compound prescriptions found for selected date');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Popup blocked! Please allow popups for this site.');
+      return;
+    }
+
+    const patientData = patientHistory?.patient || visit?.patient || {};
+  const doctorData = getPrintableDoctorData(historyVisit);
+  const doctorName = getPrintableDoctorName(doctorData);
+    const doctorQualification = getDoctorQualificationLabel(doctorData);
+    const visitDate = new Date(historyVisit.createdAt || historyVisit.updatedAt || Date.now());
+  const printedAt = printDate ? new Date(`${printDate}T12:00:00`) : new Date();
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Compound Reprint - ${escapeHtml(patientData.name || 'Patient')}</title>
+          <style>
+            @media print { @page { size: A6; margin: 0 !important; } .no-print { display: none !important; } }
+            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 16px; color: #111827; background: #f8fafc; }
+            .sheet { width: 105mm; min-height: 148mm; margin: 0 auto; background: #fff; padding: 8mm; box-sizing: border-box; box-shadow: 0 8px 18px rgba(15,23,42,0.15); }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #1d4ed8; padding-bottom: 8px; margin-bottom: 10px; }
+            .title { font-size: 14px; font-weight: 700; text-transform: uppercase; color: #1e3a8a; }
+            .meta { font-size: 10px; color: #475569; text-align: right; }
+            .patient { font-size: 11px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; margin-bottom: 10px; }
+            .item { border-bottom: 1px dashed #cbd5e1; padding: 6px 0; }
+            .name { font-size: 12px; font-weight: 700; }
+            .detail { font-size: 11px; color: #334155; margin-top: 3px; white-space: pre-wrap; }
+            .footer { margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 10px; display: flex; justify-content: space-between; }
+            .no-print { text-align: center; margin-bottom: 12px; }
+            .no-print button { border: none; background: #2563eb; color: white; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
+          </style>
+        </head>
+        <body>
+          <div class="no-print"><button onclick="window.print()">Print Refill Copy</button></div>
+          <div class="sheet">
+            <div class="header">
+              <div class="title">Compound Rx Reprint</div>
+              <div class="meta">Visit: ${visitDate.toLocaleDateString()}<br>Reprint: ${printedAt.toLocaleString()}</div>
+            </div>
+            <div class="patient">
+              <div><strong>Patient:</strong> ${escapeHtml(String(patientData.name || 'N/A').toUpperCase())}</div>
+              <div><strong>Card No:</strong> #${escapeHtml(patientData.id || 'N/A')}</div>
+              <div><strong>Visit ID:</strong> #${escapeHtml(historyVisit.visitUid || historyVisit.id)}</div>
+            </div>
+            ${historyVisit.compoundPrescriptions.map((cp, idx) => {
+              const note = escapeHtml(cp.prescriptionText || cp.rawText || cp.instructions || '');
+              return `
+                <div class="item">
+                  <div class="name">${idx + 1}. ${escapeHtml(cp.referenceNumber || `Compound ${idx + 1}`)}</div>
+                  ${note ? `<div class="detail">${note}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+            <div class="footer">
+              <div>
+                Prescribed by: <strong>${escapeHtml(doctorName)}</strong><br>
+                ${escapeHtml(doctorQualification)}
+              </div>
+              <div style="border-top: 1px solid #334155; padding-top: 4px; width: 96px; text-align: center;">Signature</div>
+            </div>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   // Print Lab Orders (with or without results)
@@ -891,6 +1314,23 @@ const PatientConsultationPage = () => {
 
   if (!visit) {
     return (
+      <Layout title="Patient Consultation" subtitle="Unable to load visit">
+        <div className="max-w-xl mx-auto bg-white border border-red-200 rounded-lg p-6 text-center">
+          <p className="text-lg font-semibold text-red-700 mb-2">Could not load consultation data</p>
+          <p className="text-sm text-gray-600 mb-4">Please return to queue and open the patient again.</p>
+          <button
+            onClick={() => navigate('/doctor/queue')}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Back to Queue
+          </button>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!visit) {
+    return (
       <Layout title="Visit Not Found" subtitle="Visit could not be loaded">
         <div className="flex items-center justify-center py-12">
           <div className="text-center">
@@ -973,22 +1413,38 @@ const PatientConsultationPage = () => {
                 <ArrowLeft className="inline-block mr-2 h-4 w-4" />
                 Back to Queue
               </button>
-              <button
-                className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center text-base whitespace-nowrap ${hasPendingOrders ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                style={{
-                  backgroundColor: hasPendingOrders ? '#9CA3AF' : '#EA2E00',
-                  color: '#FFFFFF'
-                }}
-                onClick={handleCompleteVisit}
-                disabled={hasPendingOrders}
-                title={hasPendingOrders ? 'Cannot complete visit with pending lab, radiology, or procedure orders' : 'Complete this visit'}
-              >
-                Complete Visit
-              </button>
+              {!isCompletedMode && (
+                <button
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center text-base whitespace-nowrap ${hasPendingOrders ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  style={{
+                    backgroundColor: hasPendingOrders ? '#9CA3AF' : '#EA2E00',
+                    color: '#FFFFFF'
+                  }}
+                  onClick={handleCompleteVisit}
+                  disabled={hasPendingOrders}
+                  title={hasPendingOrders ? 'Cannot complete visit with pending lab, radiology, or procedure orders' : 'Complete this visit'}
+                >
+                  Complete Visit
+                </button>
+              )}
             </div>
           </div>
         </div>
+
+        {isCompletedMode && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <div className="flex items-start gap-3">
+              <CheckCircle className="h-5 w-5 mt-0.5 text-emerald-700" />
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">Completed Visit Review Mode</p>
+                <p className="text-sm text-emerald-800 mt-1">
+                  This visit was opened from the completed queue. Full consultation tabs and print actions are available here for follow-up review and re-issue workflows.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabs Navigation - SMART FLEX BLOCKS */}
         <div className="border-b" style={{ borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' }}>
@@ -1149,6 +1605,166 @@ const PatientConsultationPage = () => {
                     placeholder="Additional notes..."
                   />
                 </div>
+
+                <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                  <h4 className="text-sm font-semibold mb-3" style={{ color: '#0C0E0B' }}>
+                    Physical Assessment (Doctor Addendum)
+                  </h4>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">General Appearance Status</label>
+                      <select
+                        value={triageForm.generalAppearanceStatus}
+                        onChange={(e) => setTriageForm({ ...triageForm, generalAppearanceStatus: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      >
+                        <option value="NOT_ASSESSED">Not Assessed</option>
+                        <option value="NORMAL">Normal</option>
+                        <option value="ABNORMAL">Abnormal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">General Appearance Notes</label>
+                      <input
+                        type="text"
+                        value={triageForm.generalAppearance}
+                        onChange={(e) => setTriageForm({ ...triageForm, generalAppearance: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Alertness, distress, cooperation"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Skin Status</label>
+                      <select
+                        value={triageForm.skinStatus}
+                        onChange={(e) => setTriageForm({ ...triageForm, skinStatus: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      >
+                        <option value="NOT_ASSESSED">Not Assessed</option>
+                        <option value="NORMAL">Normal</option>
+                        <option value="ABNORMAL">Abnormal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Skin Findings</label>
+                      <input
+                        type="text"
+                        value={triageForm.skinFindings}
+                        onChange={(e) => setTriageForm({ ...triageForm, skinFindings: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Rash, lesion, edema, wound"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium mb-2">Skin Body Regions</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 border border-gray-200 rounded-md bg-white">
+                      {['Head/Face', 'Neck', 'Chest', 'Back', 'Abdomen', 'Upper Limbs', 'Lower Limbs', 'Generalized'].map((region) => (
+                        <label key={region} className="flex items-center space-x-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={triageForm.skinBodyRegions.includes(region)}
+                            onChange={(e) => {
+                              const nextRegions = e.target.checked
+                                ? [...triageForm.skinBodyRegions, region]
+                                : triageForm.skinBodyRegions.filter((item) => item !== region);
+                              setTriageForm({ ...triageForm, skinBodyRegions: nextRegions });
+                            }}
+                          />
+                          <span>{region}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Head & Neck</label>
+                      <textarea
+                        rows={2}
+                        value={triageForm.headAndNeck}
+                        onChange={(e) => setTriageForm({ ...triageForm, headAndNeck: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Head and neck exam"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Cardiovascular</label>
+                      <textarea
+                        rows={2}
+                        value={triageForm.cardiovascularExam}
+                        onChange={(e) => setTriageForm({ ...triageForm, cardiovascularExam: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Heart sounds, pulses"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Respiratory</label>
+                      <textarea
+                        rows={2}
+                        value={triageForm.respiratoryExam}
+                        onChange={(e) => setTriageForm({ ...triageForm, respiratoryExam: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Lung sounds, effort"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Abdominal</label>
+                      <textarea
+                        rows={2}
+                        value={triageForm.abdominalExam}
+                        onChange={(e) => setTriageForm({ ...triageForm, abdominalExam: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Inspection, palpation"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Extremities</label>
+                      <textarea
+                        rows={2}
+                        value={triageForm.extremities}
+                        onChange={(e) => setTriageForm({ ...triageForm, extremities: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Movement, edema, tenderness"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Neurological</label>
+                      <textarea
+                        rows={2}
+                        value={triageForm.neurologicalExam}
+                        onChange={(e) => setTriageForm({ ...triageForm, neurologicalExam: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                        placeholder="Mental status, motor, sensory"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 p-3 rounded-md border border-amber-200 bg-amber-50">
+                    <label className="flex items-center text-sm font-medium text-amber-900 mb-2">
+                      <input
+                        type="checkbox"
+                        checked={triageForm.doctorAlertFlag}
+                        onChange={(e) => setTriageForm({ ...triageForm, doctorAlertFlag: e.target.checked })}
+                        className="mr-2"
+                      />
+                      Flag Important Finding
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={triageForm.doctorAlertSummary}
+                      onChange={(e) => setTriageForm({ ...triageForm, doctorAlertSummary: e.target.value })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-md"
+                      placeholder="Short warning or handoff note"
+                    />
+                  </div>
+                </div>
+
                 <div className="flex justify-end space-x-3 pt-4">
                   <button
                     type="button"
@@ -1548,6 +2164,13 @@ const PatientConsultationPage = () => {
                                 Medications ({selectedVisit.medicationOrders?.length || 0})
                               </button>
                               <button
+                                onClick={() => setVisitDetailTab('compoundRx')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'compoundRx' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
+                                  }`}
+                              >
+                                Compound Rx ({selectedVisit.compoundPrescriptions?.length || 0})
+                              </button>
+                              <button
                                 onClick={() => setVisitDetailTab('procedures')}
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'procedures' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
                                   }`}
@@ -1559,7 +2182,7 @@ const PatientConsultationPage = () => {
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'images' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
                                   }`}
                               >
-                                Images ({(selectedVisit.attachedImages?.length || 0) + (selectedVisit.galleryImages?.length || 0)})
+                                Images ({selectedVisit.files?.length || 0})
                               </button>
                               <button
                                 onClick={() => setVisitDetailTab('other')}
@@ -1863,17 +2486,40 @@ const PatientConsultationPage = () => {
                               {/* Medications Tab */}
                               {visitDetailTab === 'medications' && (
                                 <div className="space-y-4">
-                                  <h4 className="font-bold text-lg">Medications</h4>
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <h4 className="font-bold text-lg">Medications</h4>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <input
+                                        type="date"
+                                        value={historyMedicationPrintDate}
+                                        onChange={(e) => setHistoryMedicationPrintDate(e.target.value)}
+                                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const printVisit = selectedVisit;
+                                          if (!printVisit) {
+                                            toast.error('Select a visit date first');
+                                            return;
+                                          }
+                                          printHistoryMedicationReprint(printVisit, historyMedicationPrintDate);
+                                        }}
+                                        className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700"
+                                      >
+                                        <Printer className="h-4 w-4" />
+                                        Reprint
+                                      </button>
+                                    </div>
+                                  </div>
                                   {selectedVisit.medicationOrders && selectedVisit.medicationOrders.length > 0 ? (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                        {selectedVisit.medicationOrders.map((med, idx) => {
-                                        const cleanedStrength = (med.strength || '').replace(/\s*-\s*for\s*$/i, '').trim();
                                         const cleanedInstruction = (med.instructionText || med.instructions || '').replace(/^\s*for\s+/i, '').trim();
 
                                         return (
                                         <div key={idx} className="p-4 border rounded-lg bg-white shadow-sm">
                                           <p className="font-bold text-gray-900">{med.name}</p>
-                                          <p className="text-sm text-gray-600">{cleanedStrength || 'N/A'}</p>
                                           {cleanedInstruction && (
                                             <p className="text-sm text-indigo-600 mt-2 bg-indigo-50 p-2 rounded">
                                               <span className="font-semibold">Instructions:</span> {cleanedInstruction}
@@ -1888,6 +2534,84 @@ const PatientConsultationPage = () => {
                                   )}
 
 
+                                </div>
+                              )}
+
+                              {/* Compound Prescriptions Tab */}
+                              {visitDetailTab === 'compoundRx' && (
+                                <div className="space-y-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <h4 className="font-bold text-lg flex items-center gap-2">
+                                      🧪 Compound Prescriptions
+                                    </h4>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <input
+                                        type="date"
+                                        value={historyCompoundPrintDate}
+                                        onChange={(e) => setHistoryCompoundPrintDate(e.target.value)}
+                                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const printVisit = selectedVisit;
+                                          if (!printVisit) {
+                                            toast.error('Select a visit date first');
+                                            return;
+                                          }
+                                          printHistoryCompoundReprint(printVisit, historyCompoundPrintDate);
+                                        }}
+                                        className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700"
+                                      >
+                                        <Printer className="h-4 w-4" />
+                                        Reprint
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {selectedVisit.compoundPrescriptions && selectedVisit.compoundPrescriptions.length > 0 ? (
+                                    <div className="space-y-3">
+                                      {selectedVisit.compoundPrescriptions.map((cp, idx) => (
+                                        <div key={idx} className="p-4 border border-amber-200 rounded-lg bg-amber-50 shadow-sm">
+                                          <div className="flex justify-between items-start mb-2">
+                                            <div>
+                                              <p className="font-bold text-amber-900 text-lg">{cp.formulationType} - {cp.quantity}{cp.quantityUnit}</p>
+                                              <p className="text-xs font-mono text-amber-700">{cp.referenceNumber}</p>
+                                            </div>
+                                            <span className="px-2 py-1 bg-amber-200 text-amber-800 rounded text-xs font-medium">
+                                              {cp.status || 'PRESCRIBED'}
+                                            </span>
+                                          </div>
+                                          <div className="text-sm text-amber-800 mb-2 p-2 bg-white rounded border border-amber-100">
+                                            <span className="font-bold">Active Ingredients:</span>
+                                            <ul className="list-disc list-inside mt-1">
+                                              {cp.ingredients?.map((ing, i) => (
+                                                <li key={i}>{ing.ingredientName} <span className="font-mono">{ing.strength}{ing.unit}</span></li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                          <div className="flex flex-wrap gap-4 text-sm text-amber-800 mt-2">
+                                            {cp.frequencyType && (
+                                              <div>
+                                                <span className="font-medium">Sig:</span> {cp.frequencyType.replace(/_/g, ' ')}
+                                              </div>
+                                            )}
+                                            {cp.durationValue && (
+                                              <div>
+                                                <span className="font-medium">Duration:</span> {cp.durationValue} {cp.durationUnit?.toLowerCase()}
+                                              </div>
+                                            )}
+                                          </div>
+                                          {(cp.prescriptionText || cp.rawText || cp.instructions) && (
+                                            <div className="text-xs text-amber-700 italic mt-2 bg-amber-100 p-2 rounded">
+                                              Note: {cp.prescriptionText || cp.rawText || cp.instructions}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-gray-500">No compound prescriptions for this visit</p>
+                                  )}
                                 </div>
                               )}
 
@@ -1919,60 +2643,18 @@ const PatientConsultationPage = () => {
                               {visitDetailTab === 'images' && (
                                 <div className="space-y-4">
                                   <h4 className="font-bold text-lg">Attached Images</h4>
-                                  {(() => {
-                                    const historicalImages = [
-                                      ...(selectedVisit.attachedImages || []).map((image) => ({
-                                        id: image.id,
-                                        filePath: image.filePath,
-                                        label: image.fileName || 'Attached image',
-                                        description: image.description,
-                                        uploadedAt: image.uploadedAt,
-                                        badge: null
-                                      })),
-                                      ...(selectedVisit.galleryImages || []).map((image) => ({
-                                        id: image.id,
-                                        filePath: image.filePath,
-                                        label: image.description || `${image.imageType || 'Gallery'} image`,
-                                        description: image.description,
-                                        uploadedAt: image.createdAt,
-                                        badge: image.imageType || 'GALLERY'
-                                      }))
-                                    ];
-
-                                    if (historicalImages.length === 0) {
-                                      return <p className="text-gray-500">No images attached for this visit</p>;
-                                    }
-
-                                    return (
-                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                        {historicalImages.map((image) => (
-                                          <div key={image.id} className="p-2 border rounded-lg bg-white shadow-sm">
-                                            <div className="w-full h-24 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
-                                              <img
-                                                src={getImageUrl(image.filePath)}
-                                                alt={image.description || image.label}
-                                                className="w-full h-full object-cover"
-                                                onError={(e) => {
-                                                  e.target.style.display = 'none';
-                                                }}
-                                              />
-                                            </div>
-                                            {image.badge && (
-                                              <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700">
-                                                {image.badge}
-                                              </span>
-                                            )}
-                                            <p className="text-xs mt-1 truncate font-medium" title={image.label}>{image.label}</p>
-                                            {image.uploadedAt && (
-                                              <p className="text-[11px] text-gray-500 mt-1">
-                                                {new Date(image.uploadedAt).toLocaleDateString()}
-                                              </p>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    );
-                                  })()}
+                                  {selectedVisit.files && selectedVisit.files.length > 0 ? (
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                      {selectedVisit.files.map((file, idx) => (
+                                        <div key={idx} className="p-2 border rounded-lg">
+                                          <img src={file.fileUrl} alt="Patient file" className="w-full h-24 object-cover rounded" />
+                                          <p className="text-xs mt-1 truncate">{file.fileName}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-gray-500">No images attached for this visit</p>
+                                  )}
                                 </div>
                               )}
 
@@ -2308,7 +2990,7 @@ const PatientConsultationPage = () => {
             <div>
               <h3 className="text-lg font-semibold mb-4" style={{ color: '#0C0E0B' }}>Dental Chart</h3>
 
-              {currentUser?.qualifications?.includes('Dentist') ? (
+              {canAccessDentalFeatures ? (
                 <div>
                   {dentalRecord ? (
                     <div className="mb-4 p-4 border rounded-lg" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
@@ -2347,6 +3029,7 @@ const PatientConsultationPage = () => {
                     ref={dentalChartRef}
                     patientId={visit?.patientId}
                     visitId={visitId}
+                    patientAge={visit?.patient?.age}
                     onSave={handleDentalChartSave}
                     initialData={dentalRecord}
                   />
@@ -2354,9 +3037,9 @@ const PatientConsultationPage = () => {
               ) : (
                 <div className="text-center py-8">
                   <Smile className="h-12 w-12 mx-auto mb-4" style={{ color: '#9CA3AF' }} />
-                  <p style={{ color: '#6B7280' }}>Dental chart is only available to dentists</p>
+                  <p style={{ color: '#6B7280' }}>Dental chart is not enabled for your workspace profile</p>
                   <p className="text-sm" style={{ color: '#9CA3AF' }}>
-                    This feature is restricted to doctors with dental qualification
+                    An administrator can allow this tab from System Settings when needed
                   </p>
                 </div>
               )}
@@ -3100,9 +3783,8 @@ const PatientConsultationPage = () => {
                           <div className="flex-1">
                             <div className="flex items-center justify-between">
                               <div>
-                                <p className="font-medium" style={{ color: '#0C0E0B' }}>{order.name}</p>
-                                <p className="text-sm" style={{ color: '#6B7280' }}>
-                                  {order.strength} • {order.dosageForm}
+                                <p className="font-medium" style={{ color: '#0C0E0B' }}>
+                                  {order.name}{order.strength ? ` ${order.strength}` : ''}
                                 </p>
                               </div>
                               <div className="flex items-center gap-2">
@@ -3115,22 +3797,10 @@ const PatientConsultationPage = () => {
                                 </button>
                               </div>
                             </div>
-                            <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
+                            <div className="mt-2 grid grid-cols-1 gap-4 text-sm">
                               <div>
                                 <span className="font-medium" style={{ color: '#0C0E0B' }}>Quantity:</span>
                                 <span className="ml-2" style={{ color: '#6B7280' }}>{order.quantity}</span>
-                              </div>
-                              <div>
-                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Frequency:</span>
-                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.frequency}</span>
-                              </div>
-                              <div>
-                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Duration:</span>
-                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.duration}</span>
-                              </div>
-                              <div>
-                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Category:</span>
-                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.category || 'N/A'}</span>
                               </div>
                             </div>
 
@@ -3197,6 +3867,15 @@ const PatientConsultationPage = () => {
                   existingOrders={visit?.medicationOrders || []}
                 />
               </div>
+            </div>
+          )}
+
+          {activeTab === 'compound-prescription' && (
+            <div>
+              <CompoundPrescriptionBuilder
+                visit={visit}
+                onSaved={handleOrdersPlaced}
+              />
             </div>
           )}
 

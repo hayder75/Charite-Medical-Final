@@ -12,16 +12,17 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
+  const storedToken = sessionStorage.getItem('token') || localStorage.getItem('token');
+  const storedUser = sessionStorage.getItem('user') || localStorage.getItem('user');
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(sessionStorage.getItem('token'));
+  const [token, setToken] = useState(storedToken);
 
   useEffect(() => {
     const initAuth = async () => {
       if (token) {
         try {
-          // Try to get user data from sessionStorage first (from login)
-          const storedUser = sessionStorage.getItem('user');
+          // Try to get user data from storage first (from login)
           if (storedUser) {
             setUser(JSON.parse(storedUser));
           } else {
@@ -45,10 +46,16 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       const response = await authService.login(credentials);
-      const { token: newToken, user: userData } = response;
+      const { token: newToken, refreshToken: newRefreshToken, user: userData } = response;
 
       sessionStorage.setItem('token', newToken);
+      localStorage.setItem('token', newToken);
       sessionStorage.setItem('user', JSON.stringify(userData));
+      localStorage.setItem('user', JSON.stringify(userData));
+      if (newRefreshToken) {
+        sessionStorage.setItem('refreshToken', newRefreshToken);
+        localStorage.setItem('refreshToken', newRefreshToken);
+      }
       setToken(newToken);
       setUser(userData);
 
@@ -85,6 +92,10 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     sessionStorage.removeItem('token');
     sessionStorage.removeItem('user');
+    sessionStorage.removeItem('refreshToken');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('refreshToken');
     setToken(null);
     setUser(null);
   };
@@ -95,6 +106,7 @@ export const AuthProvider = ({ children }) => {
       const { token: newToken } = response;
 
       sessionStorage.setItem('token', newToken);
+      localStorage.setItem('token', newToken);
       setToken(newToken);
 
       return { success: true };

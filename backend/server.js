@@ -152,7 +152,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/patients', authMiddleware, patientsRoutes);
 app.use('/api/visits', authMiddleware, visitsRoutes);
 app.use('/api/billing', authMiddleware, roleGuard(['BILLING_OFFICER', 'PHARMACY_BILLING_OFFICER', 'PHARMACIST', 'ADMIN']), billingRoutes);
-app.use('/api/doctors', authMiddleware, roleGuard(['DOCTOR', 'ADMIN', 'BILLING_OFFICER', 'NURSE', 'RECEPTIONIST', 'LAB_TECHNICIAN', 'RADIOLOGIST']), doctorsRoutes);
+app.use('/api/doctors', authMiddleware, roleGuard(['DOCTOR', 'HEALTH_OFFICER', 'DERMATOLOGY', 'ADMIN', 'BILLING_OFFICER', 'NURSE', 'RECEPTIONIST', 'LAB_TECHNICIAN', 'RADIOLOGIST']), doctorsRoutes);
 app.use('/api/nurses', authMiddleware, roleGuard(['NURSE', 'ADMIN', 'DOCTOR']), nursesRoutes);
 app.use('/api/radiologies', authMiddleware, roleGuard(['RADIOLOGIST', 'RADIOLOGY_TECHNICIAN', 'DOCTOR', 'ADMIN', 'LAB_TECHNICIAN', 'BILLING_OFFICER']), radiologiesRoutes);
 app.use('/api/labs', authMiddleware, roleGuard(['LAB_TECHNICIAN', 'DOCTOR', 'ADMIN', 'BILLING_OFFICER']), labsRoutes);

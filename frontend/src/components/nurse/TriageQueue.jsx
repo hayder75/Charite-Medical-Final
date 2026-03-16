@@ -21,6 +21,71 @@ import api from '../../services/api';
 import toast from 'react-hot-toast';
 import MaterialNeedsOrdering from './MaterialNeedsOrdering';
 
+const createInitialVitalsData = () => ({
+  // Basic Vitals
+  bloodPressure: '',
+  temperature: '',
+  heartRate: '',
+  height: '',
+  weight: '',
+  oxygenSaturation: '',
+  bloodType: '',
+  condition: '',
+  notes: '',
+
+  // Chief Complaint & History (Optional)
+  chiefComplaint: '',
+  historyOfPresentIllness: '',
+  onsetOfSymptoms: '',
+  durationOfSymptoms: '',
+  severityOfSymptoms: '',
+  associatedSymptoms: '',
+  relievingFactors: '',
+  aggravatingFactors: '',
+
+  // Physical Examination (legacy fields persisted to API)
+  generalAppearance: '',
+  headAndNeck: '',
+  cardiovascularExam: '',
+  respiratoryExam: '',
+  abdominalExam: '',
+  extremities: '',
+  neurologicalExam: '',
+
+  // Structured physical assessment UI fields
+  generalAppearanceStatus: 'NOT_ASSESSED',
+  skinStatus: 'NOT_ASSESSED',
+  skinBodyRegions: [],
+  skinFindings: '',
+  headAndNeckStatus: 'NOT_ASSESSED',
+  cardiovascularStatus: 'NOT_ASSESSED',
+  respiratoryStatus: 'NOT_ASSESSED',
+  abdominalStatus: 'NOT_ASSESSED',
+  extremitiesStatus: 'NOT_ASSESSED',
+  neurologicalStatus: 'NOT_ASSESSED',
+  doctorAlertFlag: false,
+  doctorAlertSummary: ''
+});
+
+const formatAssessmentText = (status, value, extras = []) => {
+  const cleanValue = (value || '').trim();
+  const cleanExtras = extras.map((item) => String(item || '').trim()).filter(Boolean);
+  const hasAnyContent = cleanValue || cleanExtras.length > 0;
+
+  if (!hasAnyContent && (!status || status === 'NOT_ASSESSED')) return '';
+
+  const lines = [];
+  if (status && status !== 'NOT_ASSESSED') {
+    lines.push(`Status: ${status}`);
+  }
+  cleanExtras.forEach((item) => lines.push(item));
+  if (cleanValue) {
+    lines.push(cleanValue);
+  }
+
+  return lines.join('\n');
+};
+
 const TriageQueue = () => {
   const [patients, setPatients] = useState([]);
   const [doctors, setDoctors] = useState([]);
@@ -60,37 +125,7 @@ const TriageQueue = () => {
     assignment: false
   });
 
-  const [vitalsData, setVitalsData] = useState({
-    // Basic Vitals
-    bloodPressure: '',
-    temperature: '',
-    heartRate: '',
-    height: '',
-    weight: '',
-    oxygenSaturation: '',
-    bloodType: '',
-    condition: '',
-    notes: '',
-
-    // Chief Complaint & History (Optional)
-    chiefComplaint: '',
-    historyOfPresentIllness: '',
-    onsetOfSymptoms: '',
-    durationOfSymptoms: '',
-    severityOfSymptoms: '',
-    associatedSymptoms: '',
-    relievingFactors: '',
-    aggravatingFactors: '',
-
-    // Physical Examination (Optional)
-    generalAppearance: '',
-    headAndNeck: '',
-    cardiovascularExam: '',
-    respiratoryExam: '',
-    abdominalExam: '',
-    extremities: '',
-    neurologicalExam: ''
-  });
+  const [vitalsData, setVitalsData] = useState(createInitialVitalsData);
 
   const qualifications = [
     { value: 'ALL', label: 'All Qualifications' },
@@ -276,7 +311,25 @@ const TriageQueue = () => {
     const completion = {
       vitals: hasVitalsData, // Only true if at least one vital is recorded
       complaint: !!(vitalsData.chiefComplaint || vitalsData.historyOfPresentIllness),
-      examination: !!(vitalsData.generalAppearance || vitalsData.cardiovascularExam || vitalsData.respiratoryExam),
+      examination: !!(
+        vitalsData.generalAppearance ||
+        vitalsData.skinFindings ||
+        vitalsData.headAndNeck ||
+        vitalsData.cardiovascularExam ||
+        vitalsData.respiratoryExam ||
+        vitalsData.abdominalExam ||
+        vitalsData.extremities ||
+        vitalsData.neurologicalExam ||
+        vitalsData.doctorAlertSummary ||
+        vitalsData.generalAppearanceStatus !== 'NOT_ASSESSED' ||
+        vitalsData.skinStatus !== 'NOT_ASSESSED' ||
+        vitalsData.headAndNeckStatus !== 'NOT_ASSESSED' ||
+        vitalsData.cardiovascularStatus !== 'NOT_ASSESSED' ||
+        vitalsData.respiratoryStatus !== 'NOT_ASSESSED' ||
+        vitalsData.abdominalStatus !== 'NOT_ASSESSED' ||
+        vitalsData.extremitiesStatus !== 'NOT_ASSESSED' ||
+        vitalsData.neurologicalStatus !== 'NOT_ASSESSED'
+      ),
       nurseService: selectedNurseServices.length > 0 || selectedDentalServices.length > 0, // Check both nurse and dental services
       assignment: !!selectedDoctor && selectedDoctor !== '' // Only true if doctor is actually selected
     };
@@ -394,14 +447,59 @@ const TriageQueue = () => {
       if (vitalsData.relievingFactors) vitalsPayload.relievingFactors = vitalsData.relievingFactors;
       if (vitalsData.aggravatingFactors) vitalsPayload.aggravatingFactors = vitalsData.aggravatingFactors;
 
-      // Optional examination fields
-      if (vitalsData.generalAppearance) vitalsPayload.generalAppearance = vitalsData.generalAppearance;
-      if (vitalsData.headAndNeck) vitalsPayload.headAndNeck = vitalsData.headAndNeck;
-      if (vitalsData.cardiovascularExam) vitalsPayload.cardiovascularExam = vitalsData.cardiovascularExam;
-      if (vitalsData.respiratoryExam) vitalsPayload.respiratoryExam = vitalsData.respiratoryExam;
-      if (vitalsData.abdominalExam) vitalsPayload.abdominalExam = vitalsData.abdominalExam;
-      if (vitalsData.extremities) vitalsPayload.extremities = vitalsData.extremities;
-      if (vitalsData.neurologicalExam) vitalsPayload.neurologicalExam = vitalsData.neurologicalExam;
+      // Optional examination fields (store structured status + notes in existing text columns)
+      const generalAppearanceText = formatAssessmentText(
+        vitalsData.generalAppearanceStatus,
+        vitalsData.generalAppearance
+      );
+      const skinAndExtremitiesText = formatAssessmentText(
+        vitalsData.skinStatus,
+        vitalsData.skinFindings,
+        [
+          vitalsData.skinBodyRegions?.length
+            ? `Body Regions: ${vitalsData.skinBodyRegions.join(', ')}`
+            : '',
+          formatAssessmentText(vitalsData.extremitiesStatus, vitalsData.extremities)
+        ]
+      );
+      const headAndNeckText = formatAssessmentText(
+        vitalsData.headAndNeckStatus,
+        vitalsData.headAndNeck
+      );
+      const cardiovascularText = formatAssessmentText(
+        vitalsData.cardiovascularStatus,
+        vitalsData.cardiovascularExam
+      );
+      const respiratoryText = formatAssessmentText(
+        vitalsData.respiratoryStatus,
+        vitalsData.respiratoryExam
+      );
+      const abdominalText = formatAssessmentText(
+        vitalsData.abdominalStatus,
+        vitalsData.abdominalExam
+      );
+      const neuroText = formatAssessmentText(
+        vitalsData.neurologicalStatus,
+        vitalsData.neurologicalExam
+      );
+
+      if (generalAppearanceText) vitalsPayload.generalAppearance = generalAppearanceText;
+      if (headAndNeckText) vitalsPayload.headAndNeck = headAndNeckText;
+      if (cardiovascularText) vitalsPayload.cardiovascularExam = cardiovascularText;
+      if (respiratoryText) vitalsPayload.respiratoryExam = respiratoryText;
+      if (abdominalText) vitalsPayload.abdominalExam = abdominalText;
+      if (skinAndExtremitiesText) vitalsPayload.extremities = skinAndExtremitiesText;
+      if (neuroText) vitalsPayload.neurologicalExam = neuroText;
+
+      if (vitalsData.doctorAlertFlag || vitalsData.doctorAlertSummary?.trim()) {
+        const existingNotes = vitalsPayload.notes ? `${vitalsPayload.notes}\n\n` : '';
+        const doctorAlertBlock = [
+          '[Doctor Alert]',
+          `Flagged: ${vitalsData.doctorAlertFlag ? 'YES' : 'NO'}`,
+          `Summary: ${(vitalsData.doctorAlertSummary || '').trim() || 'Not provided'}`
+        ].join('\n');
+        vitalsPayload.notes = `${existingNotes}${doctorAlertBlock}`;
+      }
 
       // Always record vitals to trigger triaging (even with minimal data)
       // This ensures the visit status becomes TRIAGED
@@ -494,32 +592,7 @@ const TriageQueue = () => {
       setDentalServiceSearchQuery('');
 
       // Reset form
-      setVitalsData({
-        bloodPressure: '',
-        temperature: '',
-        heartRate: '',
-        height: '',
-        weight: '',
-        oxygenSaturation: '',
-        bloodType: '',
-        condition: '',
-        notes: '',
-        chiefComplaint: '',
-        historyOfPresentIllness: '',
-        onsetOfSymptoms: '',
-        durationOfSymptoms: '',
-        severityOfSymptoms: '',
-        associatedSymptoms: '',
-        relievingFactors: '',
-        aggravatingFactors: '',
-        generalAppearance: '',
-        headAndNeck: '',
-        cardiovascularExam: '',
-        respiratoryExam: '',
-        abdominalExam: '',
-        extremities: '',
-        neurologicalExam: ''
-      });
+      setVitalsData(createInitialVitalsData());
 
       // Reset to first section
       setActiveSection('vitals');
@@ -666,7 +739,19 @@ const TriageQueue = () => {
                       respiratoryExam: '',
                       abdominalExam: '',
                       extremities: '',
-                      neurologicalExam: ''
+                      neurologicalExam: '',
+                      generalAppearanceStatus: 'NOT_ASSESSED',
+                      skinStatus: 'NOT_ASSESSED',
+                      skinBodyRegions: [],
+                      skinFindings: '',
+                      headAndNeckStatus: 'NOT_ASSESSED',
+                      cardiovascularStatus: 'NOT_ASSESSED',
+                      respiratoryStatus: 'NOT_ASSESSED',
+                      abdominalStatus: 'NOT_ASSESSED',
+                      extremitiesStatus: 'NOT_ASSESSED',
+                      neurologicalStatus: 'NOT_ASSESSED',
+                      doctorAlertFlag: false,
+                      doctorAlertSummary: ''
                     });
                     setSelectedDoctor('');
                     setSelectedNurseServices([]);
@@ -1051,19 +1136,93 @@ const TriageQueue = () => {
                     <div className="border border-gray-200 rounded-lg p-6">
                       <div className="space-y-4">
                         <div>
-                          <label className="label">General Appearance</label>
-                          <input
-                            type="text"
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                              <label className="label">General Appearance Status</label>
+                              <select
+                                className="input"
+                                value={vitalsData.generalAppearanceStatus}
+                                onChange={(e) => setVitalsData({ ...vitalsData, generalAppearanceStatus: e.target.value })}
+                              >
+                                <option value="NOT_ASSESSED">Not Assessed</option>
+                                <option value="NORMAL">Normal</option>
+                                <option value="ABNORMAL">Abnormal</option>
+                              </select>
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="label">General Appearance Notes</label>
+                              <input
+                                type="text"
+                                className="input"
+                                placeholder="Distress level, alertness, cooperation"
+                                value={vitalsData.generalAppearance}
+                                onChange={(e) => setVitalsData({ ...vitalsData, generalAppearance: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="label">Skin Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.skinStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, skinStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="label">Skin Body Regions</label>
+                            <div className="grid grid-cols-2 gap-2 p-3 border border-gray-200 rounded-lg bg-gray-50">
+                              {['Head/Face', 'Neck', 'Chest', 'Back', 'Abdomen', 'Upper Limbs', 'Lower Limbs', 'Generalized'].map((region) => (
+                                <label key={region} className="flex items-center space-x-2 text-sm text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={vitalsData.skinBodyRegions.includes(region)}
+                                    onChange={(e) => {
+                                      const nextRegions = e.target.checked
+                                        ? [...vitalsData.skinBodyRegions, region]
+                                        : vitalsData.skinBodyRegions.filter((item) => item !== region);
+                                      setVitalsData({ ...vitalsData, skinBodyRegions: nextRegions });
+                                    }}
+                                  />
+                                  <span>{region}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="label">Skin Findings</label>
+                          <textarea
                             className="input"
-                            placeholder="Overall appearance, distress level, alertness, cooperation"
-                            value={vitalsData.generalAppearance}
-                            onChange={(e) => setVitalsData({ ...vitalsData, generalAppearance: e.target.value })}
+                            rows="2"
+                            placeholder="Rash, lesions, wounds, edema, discoloration"
+                            value={vitalsData.skinFindings}
+                            onChange={(e) => setVitalsData({ ...vitalsData, skinFindings: e.target.value })}
                           />
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <label className="label">Head & Neck</label>
+                            <label className="label">Head & Neck Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.headAndNeckStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, headAndNeckStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="label">Head & Neck Notes</label>
                             <textarea
                               className="input"
                               rows="2"
@@ -1073,7 +1232,22 @@ const TriageQueue = () => {
                             />
                           </div>
                           <div>
-                            <label className="label">Cardiovascular</label>
+                            <label className="label">Cardiovascular Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.cardiovascularStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, cardiovascularStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="label">Cardiovascular Notes</label>
                             <textarea
                               className="input"
                               rows="2"
@@ -1086,7 +1260,34 @@ const TriageQueue = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <label className="label">Respiratory</label>
+                            <label className="label">Respiratory Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.respiratoryStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, respiratoryStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="label">Abdominal Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.abdominalStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, abdominalStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="label">Respiratory Notes</label>
                             <textarea
                               className="input"
                               rows="2"
@@ -1096,7 +1297,7 @@ const TriageQueue = () => {
                             />
                           </div>
                           <div>
-                            <label className="label">Abdomen</label>
+                            <label className="label">Abdominal Notes</label>
                             <textarea
                               className="input"
                               rows="2"
@@ -1109,7 +1310,34 @@ const TriageQueue = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <label className="label">Extremities</label>
+                            <label className="label">Extremities Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.extremitiesStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, extremitiesStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="label">Neurological Status</label>
+                            <select
+                              className="input"
+                              value={vitalsData.neurologicalStatus}
+                              onChange={(e) => setVitalsData({ ...vitalsData, neurologicalStatus: e.target.value })}
+                            >
+                              <option value="NOT_ASSESSED">Not Assessed</option>
+                              <option value="NORMAL">Normal</option>
+                              <option value="ABNORMAL">Abnormal</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="label">Extremities Notes</label>
                             <textarea
                               className="input"
                               rows="2"
@@ -1119,7 +1347,7 @@ const TriageQueue = () => {
                             />
                           </div>
                           <div>
-                            <label className="label">Neurological</label>
+                            <label className="label">Neurological Notes</label>
                             <textarea
                               className="input"
                               rows="2"
@@ -1128,6 +1356,24 @@ const TriageQueue = () => {
                               onChange={(e) => setVitalsData({ ...vitalsData, neurologicalExam: e.target.value })}
                             />
                           </div>
+                        </div>
+
+                        <div className="border border-amber-200 rounded-lg bg-amber-50 p-4">
+                          <label className="flex items-center space-x-2 mb-2">
+                            <input
+                              type="checkbox"
+                              checked={vitalsData.doctorAlertFlag}
+                              onChange={(e) => setVitalsData({ ...vitalsData, doctorAlertFlag: e.target.checked })}
+                            />
+                            <span className="text-sm font-medium text-amber-900">Flag important finding for doctor review</span>
+                          </label>
+                          <textarea
+                            className="input"
+                            rows="2"
+                            placeholder="What should the doctor pay immediate attention to?"
+                            value={vitalsData.doctorAlertSummary}
+                            onChange={(e) => setVitalsData({ ...vitalsData, doctorAlertSummary: e.target.value })}
+                          />
                         </div>
                       </div>
                     </div>
@@ -1435,32 +1681,7 @@ const TriageQueue = () => {
                     onClick={() => {
                       setShowVitalsForm(false);
                       // Reset form data when canceling
-                      setVitalsData({
-                        bloodPressure: '',
-                        temperature: '',
-                        heartRate: '',
-                        height: '',
-                        weight: '',
-                        oxygenSaturation: '',
-                        bloodType: '',
-                        condition: '',
-                        notes: '',
-                        chiefComplaint: '',
-                        historyOfPresentIllness: '',
-                        onsetOfSymptoms: '',
-                        durationOfSymptoms: '',
-                        severityOfSymptoms: '',
-                        associatedSymptoms: '',
-                        relievingFactors: '',
-                        aggravatingFactors: '',
-                        generalAppearance: '',
-                        headAndNeck: '',
-                        cardiovascularExam: '',
-                        respiratoryExam: '',
-                        abdominalExam: '',
-                        extremities: '',
-                        neurologicalExam: ''
-                      });
+                      setVitalsData(createInitialVitalsData());
                       setSelectedDoctor('');
                       setSelectedNurseServices([]);
                       setSelectedDentalServices([]);

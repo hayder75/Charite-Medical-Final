@@ -16,6 +16,7 @@ import {
 import api from "../../services/api";
 import toast from "react-hot-toast";
 import { formatMedicationName } from "../../utils/medicalStandards";
+import BankMethodSelect from "../common/BankMethodSelect";
 
 const BillingQueue = () => {
   const [billings, setBillings] = useState([]);
@@ -25,6 +26,7 @@ const BillingQueue = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("PENDING");
   const [insurances, setInsurances] = useState([]);
+  const [oldPatientModeEnabled, setOldPatientModeEnabled] = useState(false);
 
   // Clean payment form state
   const [paymentForm, setPaymentForm] = useState({
@@ -36,10 +38,13 @@ const BillingQueue = () => {
     notes: "",
     isEmergency: false,
     useAccount: false,
+    paymentProofPath: "",
+    waiveRegistrationForOldPatient: false,
   });
 
   // Patient account balance
   const [patientAccount, setPatientAccount] = useState(null);
+  const [uploadingProof, setUploadingProof] = useState(false);
 
   // Form validation errors
   const [formErrors, setFormErrors] = useState({});
@@ -88,10 +93,34 @@ const BillingQueue = () => {
     }
   }, []);
 
+  const fetchOldPatientRegistrationMode = React.useCallback(async () => {
+    try {
+      const response = await api.get("/billing/settings/old-patient-registration-mode");
+      setOldPatientModeEnabled(Boolean(response.data?.enabled));
+    } catch (error) {
+      console.error("Error fetching old patient registration mode:", error);
+      setOldPatientModeEnabled(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchBillings();
     fetchInsurances();
-  }, [fetchBillings, fetchInsurances]);
+    fetchOldPatientRegistrationMode();
+  }, [fetchBillings, fetchInsurances, fetchOldPatientRegistrationMode]);
+
+  const isRegistrationBilling = (billing) =>
+    Boolean(
+      billing?.services?.some((service) =>
+        String(service?.service?.code || "").toUpperCase().startsWith("CARD-REG"),
+      ),
+    );
+
+  const canWaiveRegistration =
+    oldPatientModeEnabled &&
+    selectedBilling &&
+    isRegistrationBilling(selectedBilling) &&
+    Number(selectedBilling.paidAmount || 0) === 0;
 
   const handleDeleteService = async (billingId, serviceId, serviceName) => {
     if (
@@ -122,9 +151,15 @@ const BillingQueue = () => {
   // Clean validation function
   const validatePaymentForm = () => {
     const errors = {};
+    const numericAmount = Number(paymentForm.amount);
+    const isWaiverPayment = canWaiveRegistration && paymentForm.waiveRegistrationForOldPatient;
 
-    if (!paymentForm.amount || paymentForm.amount < 0) {
-      errors.amount = "Amount cannot be negative";
+    if (!Number.isFinite(numericAmount) || numericAmount < 0) {
+      errors.amount = "Amount must be zero or a positive number";
+    }
+
+    if (isWaiverPayment && numericAmount !== 0) {
+      errors.amount = "Waived registration payment amount must be 0";
     }
 
     if (paymentForm.type === "INSURANCE" && !paymentForm.insuranceId) {
@@ -134,10 +169,6 @@ const BillingQueue = () => {
     if (paymentForm.type === "BANK") {
       if (!paymentForm.bankName.trim()) {
         errors.bankName = "Bank name is required for bank transfers";
-      }
-      if (!paymentForm.transNumber.trim()) {
-        errors.transNumber =
-          "Transaction number is required for bank transfers";
       }
     }
 
@@ -158,10 +189,12 @@ const BillingQueue = () => {
     }
 
     try {
+      const submittedAmount = Number(paymentForm.amount);
+
       // Prepare payment data
       const paymentData = {
         billingId: selectedBilling.id,
-        amount: Number(paymentForm.amount),
+        amount: submittedAmount,
         type: paymentForm.type,
         bankName: paymentForm.bankName || null,
         transNumber: paymentForm.transNumber || null,
@@ -170,11 +203,14 @@ const BillingQueue = () => {
         isEmergency: paymentForm.isEmergency,
         useAccount: paymentForm.useAccount,
         convertToDebt: paymentForm.convertToDebt || false,
+        paymentProofPath: paymentForm.paymentProofPath || null,
+        waiveRegistrationForOldPatient:
+          canWaiveRegistration && paymentForm.waiveRegistrationForOldPatient,
       };
 
       await api.post("/billing/payments", paymentData);
 
-      const remaining = (selectedBilling.totalAmount - (selectedBilling.paidAmount || 0)) - Number(paymentForm.amount);
+      const remaining = (selectedBilling.totalAmount - (selectedBilling.paidAmount || 0)) - submittedAmount;
       if (paymentForm.convertToDebt && remaining > 0) {
         toast.success(`Payment processed! ETB ${remaining.toLocaleString()} added to patient's credit account as debt.`);
       } else {
@@ -201,6 +237,8 @@ const BillingQueue = () => {
       isEmergency: false,
       useAccount: false,
       convertToDebt: false,
+      paymentProofPath: "",
+      waiveRegistrationForOldPatient: false,
     });
     setFormErrors({});
   };
@@ -234,13 +272,58 @@ const BillingQueue = () => {
       isEmergency: false,
       useAccount: false,
       convertToDebt: isDeferred,
+      paymentProofPath: "",
+      waiveRegistrationForOldPatient: false,
     });
     setFormErrors({});
     setShowPaymentForm(true);
   };
 
+  const handleOldPatientWaiverToggle = () => {
+    setPaymentForm((prev) => {
+      const nextChecked = !prev.waiveRegistrationForOldPatient;
+      const remainingBalance = Math.max(
+        0,
+        (selectedBilling?.totalAmount || 0) - (selectedBilling?.paidAmount || 0),
+      );
+
+      return {
+        ...prev,
+        waiveRegistrationForOldPatient: nextChecked,
+        amount: nextChecked ? "0" : remainingBalance.toString(),
+        useAccount: nextChecked ? false : prev.useAccount,
+        convertToDebt: nextChecked ? false : prev.convertToDebt,
+      };
+    });
+  };
+
   const [showDeleteBillingModal, setShowDeleteBillingModal] = useState(null);
   const [deleteBillingLoading, setDeleteBillingLoading] = useState(false);
+
+  const handlePaymentProofUpload = async (file) => {
+    if (!file) return;
+
+    try {
+      setUploadingProof(true);
+      const formData = new FormData();
+      formData.append("paymentProof", file);
+
+      const response = await api.post("/billing/payments/upload-proof", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      setPaymentForm((prev) => ({
+        ...prev,
+        paymentProofPath: response.data?.file?.path || "",
+      }));
+      toast.success("Payment proof uploaded");
+    } catch (error) {
+      console.error("Error uploading payment proof:", error);
+      toast.error(error.response?.data?.error || "Failed to upload payment proof");
+    } finally {
+      setUploadingProof(false);
+    }
+  };
 
   const deleteBilling = async (billingId) => {
     try {
@@ -870,9 +953,9 @@ const BillingQueue = () => {
 
       {/* Payment Form Modal */}
       {showPaymentForm && selectedBilling && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div className="mt-3">
+        <div className="fixed inset-0 z-50 bg-gray-900/50 p-4 flex items-center justify-center">
+          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-gray-200 max-h-[92vh] overflow-hidden">
+            <div className="mt-0 p-6 overflow-y-auto max-h-[92vh]">
               <h3 className="text-lg font-medium text-gray-900 mb-4">
                 Process Payment - {selectedBilling.patient.name}
               </h3>
@@ -926,6 +1009,27 @@ const BillingQueue = () => {
                         </span>
                       )}
                     </p>
+                  </div>
+                )}
+                {canWaiveRegistration && (
+                  <div className="mt-3 p-3 rounded-lg border border-amber-200 bg-amber-50">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={paymentForm.waiveRegistrationForOldPatient}
+                        onChange={handleOldPatientWaiverToggle}
+                        className="mt-1 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                      />
+                      <div>
+                        <p className="text-sm font-semibold text-amber-900">
+                          Make this registration free (old patient)
+                        </p>
+                        <p className="text-xs text-amber-800 mt-1">
+                          Only use this for legacy patients who already paid registration before this system.
+                          When checked, this card registration billing is waived at 0 ETB.
+                        </p>
+                      </div>
+                    </label>
                   </div>
                 )}
               </div>
@@ -988,6 +1092,7 @@ const BillingQueue = () => {
                     onChange={(e) =>
                       setPaymentForm({ ...paymentForm, amount: e.target.value })
                     }
+                    disabled={paymentForm.waiveRegistrationForOldPatient}
                     required
                   />
                   <p className="text-xs text-gray-500 mt-1">
@@ -1083,11 +1188,10 @@ const BillingQueue = () => {
 
                 {/* Bank Transfer Fields */}
                 {paymentForm.type === "BANK" && (
-                  <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="label">Bank Name *</label>
-                      <input
-                        type="text"
+                      <BankMethodSelect
                         className={`input ${formErrors.bankName ? "border-red-500" : ""}`}
                         value={paymentForm.bankName}
                         onChange={(e) =>
@@ -1096,7 +1200,6 @@ const BillingQueue = () => {
                             bankName: e.target.value,
                           })
                         }
-                        placeholder="Enter bank name"
                       />
                       {formErrors.bankName && (
                         <p className="text-red-500 text-sm mt-1">
@@ -1105,7 +1208,7 @@ const BillingQueue = () => {
                       )}
                     </div>
                     <div>
-                      <label className="label">Transaction Number *</label>
+                      <label className="label">Transaction Number</label>
                       <input
                         type="text"
                         className={`input ${formErrors.transNumber ? "border-red-500" : ""}`}
@@ -1118,13 +1221,32 @@ const BillingQueue = () => {
                         }
                         placeholder="Enter transaction number"
                       />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Optional reference number from the bank or wallet.
+                      </p>
                       {formErrors.transNumber && (
                         <p className="text-red-500 text-sm mt-1">
                           {formErrors.transNumber}
                         </p>
                       )}
                     </div>
-                  </>
+                    <div className="md:col-span-2">
+                      <label className="label">Payment Proof Screenshot (Optional)</label>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="input"
+                        disabled={uploadingProof}
+                        onChange={(e) => handlePaymentProofUpload(e.target.files?.[0])}
+                      />
+                      {uploadingProof && (
+                        <p className="text-xs text-blue-600 mt-1">Uploading proof...</p>
+                      )}
+                      {paymentForm.paymentProofPath && (
+                        <p className="text-xs text-green-700 mt-1">Proof attached: {paymentForm.paymentProofPath}</p>
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 {/* Insurance Selection */}

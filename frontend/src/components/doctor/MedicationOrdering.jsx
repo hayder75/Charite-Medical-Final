@@ -170,7 +170,6 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
   const fetchPrescribedMedications = async () => {
     if (!visitId) return;
     try {
-      setLoadingPrescribed(true);
       const response = await api.get(`/doctors/visits/${visitId}`);
       const visitData = response.data;
       setPrescribedMedications(visitData.medicationOrders || []);
@@ -188,8 +187,34 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
     }
     try {
       setIsSearching(true);
-      const response = await api.get(`/medications/search?query=${encodeURIComponent(query)}&limit=20`);
-      setSearchResults(response.data.medications || []);
+      const [inventoryResponse, customResponse] = await Promise.all([
+        api.get(`/medications/search?query=${encodeURIComponent(query)}&limit=20`),
+        api.get(`/doctors/custom-medications/search?query=${encodeURIComponent(query)}`)
+      ]);
+
+      const inventoryMedications = (inventoryResponse.data.medications || []).map((medication) => ({
+        ...medication,
+        isCustomSuggestion: false
+      }));
+
+      const customMedications = (customResponse.data.customMedications || []).map((medication) => ({
+        ...medication,
+        id: `custom-${medication.id}`,
+        isCustomSuggestion: true,
+        availableQuantity: null,
+        category: medication.category || ''
+      }));
+
+      const mergedMedicationMap = new Map();
+      [...inventoryMedications, ...customMedications].forEach((medication) => {
+        const key = `${String(medication.name || '').toLowerCase()}|${String(medication.strength || '').toLowerCase()}`;
+        const existing = mergedMedicationMap.get(key);
+        if (!existing || (existing.isCustomSuggestion && !medication.isCustomSuggestion)) {
+          mergedMedicationMap.set(key, medication);
+        }
+      });
+
+      setSearchResults(Array.from(mergedMedicationMap.values()).slice(0, 25));
     } catch (error) {
       console.error('Error searching medications:', error);
       toast.error('Failed to search medications');
@@ -209,18 +234,19 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
   };
 
   const addMedicationFromSearch = (medication) => {
+    const isCustomSuggestion = Boolean(medication.isCustomSuggestion);
     const newMedication = {
-      id: medication.id,
+      id: isCustomSuggestion ? `custom-picked-${Date.now()}` : medication.id,
       name: medication.name,
       genericName: medication.genericName,
       dosageForm: medication.dosageForm,
       strength: medication.strength,
       manufacturer: medication.manufacturer,
-      availableQuantity: medication.availableQuantity,
-      unitPrice: medication.unitPrice,
-      category: medication.category || 'TABLETS',
-      instructionText: '',
-      isCustom: false
+      availableQuantity: medication.availableQuantity ?? 0,
+      unitPrice: medication.unitPrice ?? 0,
+      category: medication.category || '',
+      instructionText: medication.instructions || '',
+      isCustom: isCustomSuggestion
     };
     setSelectedMedications([...selectedMedications, newMedication]);
     setMedicationSearch('');
@@ -302,25 +328,23 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
       toast.error('Please enter medication name');
       return;
     }
-    if (!customMedication.strength.trim()) {
-      toast.error('Please enter medication strength');
-      return;
-    }
 
+    const normalizedName = customMedication.name.trim().toLowerCase();
+    const normalizedStrength = String(customMedication.strength || '').trim().toLowerCase();
     const wasSelectedFromSearch = customMedSearchResults.some(
-      med => med.name.toLowerCase() === customMedication.name.toLowerCase() &&
-        med.strength.toLowerCase() === customMedication.strength.toLowerCase()
+      med => String(med.name || '').trim().toLowerCase() === normalizedName &&
+        String(med.strength || '').trim().toLowerCase() === normalizedStrength
     );
 
-    if (!wasSelectedFromSearch && customMedication.name.trim() && customMedication.dosageForm && customMedication.strength) {
+    if (!wasSelectedFromSearch && customMedication.name.trim()) {
       try {
         setIsSavingCustomMed(true);
         await api.post('/doctors/custom-medications', {
           name: customMedication.name,
           genericName: customMedication.genericName || customMedication.name,
           dosageFormCategory: customMedication.dosageFormCategory || null,
-          dosageForm: customMedication.dosageForm,
-          strength: customMedication.strength,
+          dosageForm: customMedication.dosageForm || 'Tablet',
+          strength: customMedication.strength?.trim() || '',
           strengthText: customMedication.strengthText || null,
           routeCode: customMedication.routeCode || null,
           quantity: customMedication.quantity || null,
@@ -353,7 +377,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
       manufacturer: 'Custom',
       availableQuantity: 0,
       unitPrice: 0,
-      category: 'TABLETS',
+      category: '',
       instructionText: customMedication.instructions || '',
       isCustom: true
     };
@@ -437,7 +461,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
         strengthText: med.strengthText || null,
         instructionText: med.instructions || med.instructionText || null,
         additionalNotes: med.isCustom ? 'Custom medication - not in inventory' : '',
-        category: med.category || 'TABLETS'
+        category: med.category || null
       }));
 
       for (const order of orders) {
@@ -464,6 +488,57 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
       age--;
     }
     return age;
+  };
+
+  const getDoctorQualificationLabel = (doctorData, fallbackDoctorData) => {
+    const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+      .map((role) => String(role || '').toUpperCase());
+    const mergedQualifications = [
+      ...(doctorData?.qualifications || []),
+      ...(fallbackDoctorData?.qualifications || [])
+    ];
+    const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+
+    const isHealthOfficer =
+      roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (isHealthOfficer) {
+      return 'Health Officer (HO)';
+    }
+
+    if (roleCandidates.some((role) => role.includes('DERM')) || normalizedQualifications.some((q) => q.includes('DERM'))) {
+      return 'Dermato-venereologist';
+    }
+
+    return Array.from(new Set(mergedQualifications.filter(Boolean))).join(', ') || 'General Practitioner';
+  };
+
+  const getPrintableDoctorName = (doctorData, fallbackDoctorData) => {
+    const rawName = String(
+      doctorData?.fullname ||
+      doctorData?.fullName ||
+      doctorData?.name ||
+      fallbackDoctorData?.fullname ||
+      fallbackDoctorData?.username ||
+      ''
+    ).trim();
+
+    if (!rawName) return 'Attending Clinician';
+    if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
+
+    const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+      .map((role) => String(role || '').toUpperCase());
+    const mergedQualifications = [
+      ...(doctorData?.qualifications || []),
+      ...(fallbackDoctorData?.qualifications || [])
+    ];
+    const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+    const isHealthOfficer =
+      roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
   };
 
   const printPrescription = async () => {
@@ -524,8 +599,8 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
 
       const firstMed = medicationsToPrint[0];
       const prescribingDoctor = firstMed?.doctor || firstMed?.medicationOrder?.doctor || doctorData || currentUser;
-      const doctorName = prescribingDoctor?.fullname || currentUser?.fullname || 'Dr. Unknown';
-      const doctorQualification = prescribingDoctor?.qualifications?.join(', ') || currentUser?.qualifications?.join(', ') || 'General Practitioner';
+      const doctorName = getPrintableDoctorName(prescribingDoctor, currentUser);
+      const doctorQualification = getDoctorQualificationLabel(prescribingDoctor, currentUser);
 
       const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -577,7 +652,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <div class="header-left">
                 <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
                 <div class="clinic-info">
-                  <h1 class="clinic-name">Selihom Medical Clinic</h1>
+                  <h1 class="clinic-name">Charite Medium Clinic</h1>
                   <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
                 </div>
               </div>
@@ -598,14 +673,14 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
             <div class="medications-section">
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, idx) => {
-        const cleanedName = (med.name || '').toUpperCase();
-        const strength = med.strength || med.strengthText || '';
-        const dosageForm = med.dosageForm || '';
+              const displayName = String(med.name || '').trim() || 'Unknown Medication';
+              const rawStrength = String(med.strength || '').trim();
+              const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
         const instructionText = med.instructions || med.instructionText || '';
 
         return `
                 <div class="medication-item">
-                          <div class="medication-name"># ${idx + 1}. ${cleanedName}${strength ? ' - ' + strength : ''}</div>
+                  <div class="medication-name"># ${idx + 1}. ${displayName}${strengthSuffix}</div>
                   ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                 </div>
               `;
@@ -690,9 +765,16 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               >
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="font-medium text-gray-900">{medication.name}</p>
+                    <p className="font-medium text-gray-900">
+                      {medication.name}
+                      {medication.strength ? ` - ${medication.strength}` : ''}
+                    </p>
                   </div>
-                  <span className="text-xs font-semibold text-green-600">{medication.availableQuantity} in stock</span>
+                  {medication.isCustomSuggestion ? (
+                    <span className="text-xs font-semibold text-indigo-600">Saved custom</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-green-600">{medication.availableQuantity} in stock</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -742,7 +824,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-indigo-900 mb-1">Strength</label>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Strength (Optional)</label>
                 <input
                   type="text"
                   value={customMedication.strength}

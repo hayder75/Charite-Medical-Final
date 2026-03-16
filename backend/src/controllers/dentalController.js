@@ -40,7 +40,7 @@ const dentalRecordSchema = z.object({
   painFlags: z.record(z.string(), z.any()).optional(),
   gumCondition: z.string().optional(),
   oralHygiene: z.string().optional(),
-  treatmentPlan: z.record(z.string(), z.array(z.number())).optional(),
+  treatmentPlan: z.any().optional(),
   notes: z.string().optional()
 });
 

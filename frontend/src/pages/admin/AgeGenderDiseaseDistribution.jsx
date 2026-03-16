@@ -128,8 +128,10 @@ const AgeGenderDiseaseDistribution = () => {
             <body>
                 <div class="header">
                     <h1>Diseases Information Tally Sheet</h1>
-                    <p><strong>Health Facility:</strong> Medical Clinic</p>
+                    <p><strong>Health Facility:</strong> Charite Medium Clinic</p>
+                    <p><strong>Report Type:</strong> Age-Gender Disease Distribution</p>
                     <p><strong>Year:</strong> ${new Date(startDate).getFullYear()} | <strong>Month:</strong> ${getMonthYearLabel()}</p>
+                    <p><strong>Date Range:</strong> ${startDate} to ${endDate}</p>
                     <p style="margin-top:10px;"><em>${title} Distribution</em></p>
                 </div>
                 <table>
