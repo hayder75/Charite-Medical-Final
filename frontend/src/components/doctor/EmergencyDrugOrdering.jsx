@@ -410,12 +410,18 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
             </div>
             <div class="medications-section">
               <h3>Prescribed Medications</h3>
-              ${medicationsToPrint.map((med, idx) => `
+              ${medicationsToPrint.map((med, idx) => {
+                const cleanedName = formatMedicationName(med.name || '').toUpperCase();
+                const rawStrength = String(med.strength || '').trim();
+                const upperStrength = rawStrength.toUpperCase();
+                const strengthSuffix = rawStrength && !cleanedName.includes(upperStrength) ? ` ${upperStrength}` : '';
+                return `
                 <div class="medication-item">
-                  <div class="medication-name"># ${idx + 1}. ${(formatMedicationName(med.name || '').toUpperCase())}</div>
+                  <div class="medication-name"># ${idx + 1}. ${cleanedName}${strengthSuffix}</div>
                   ${med.instructions ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${med.instructions}</div>` : ''}
                 </div>
-              `).join('')}
+              `;
+              }).join('')}
             </div>
             <div class="footer">
               <div>

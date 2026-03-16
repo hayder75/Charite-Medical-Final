@@ -674,11 +674,14 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, idx) => {
         const cleanedName = (med.name || '').toUpperCase();
+              const rawStrength = String(med.strength || '').trim();
+              const upperStrength = rawStrength.toUpperCase();
+              const strengthSuffix = rawStrength && !cleanedName.includes(upperStrength) ? ` ${upperStrength}` : '';
         const instructionText = med.instructions || med.instructionText || '';
 
         return `
                 <div class="medication-item">
-                          <div class="medication-name"># ${idx + 1}. ${cleanedName}</div>
+                    <div class="medication-name"># ${idx + 1}. ${cleanedName}${strengthSuffix}</div>
                   ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                 </div>
               `;
