@@ -1,26 +1,55 @@
-import React, { useState, useEffect } from 'react';
-import { AlertTriangle, Pill, CheckCircle, Clock, Plus, Printer, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Search, Plus, Trash2, Printer, Pill, CheckCircle, X, Save } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { formatMedicationName, formatEmergencyInstruction } from '../../utils/medicalStandards';
+import { formatMedicationName } from '../../utils/medicalStandards';
+
+const DEFAULT_MEDICATION = {
+  serviceId: null,
+  name: '',
+  strength: '',
+  quantity: 1,
+  unitPrice: 0,
+  instructions: '',
+  dosageForm: 'Tablet',
+  frequency: '',
+  frequencyPeriod: '',
+  duration: '',
+  durationPeriod: 'days',
+  route: '',
+  isCustom: false
+};
 
 const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
   const [services, setServices] = useState([]);
-  const [selectedServices, setSelectedServices] = useState([]);
-  const [quantities, setQuantities] = useState({});
-  const [instructions, setInstructions] = useState('');
-  const [notes, setNotes] = useState('');
+  const [existingOrders, setExistingOrders] = useState([]);
+  const [selectedMedications, setSelectedMedications] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
   const [fetchingData, setFetchingData] = useState(true);
-  const [existingOrders, setExistingOrders] = useState([]);
-  const [medDetails, setMedDetails] = useState({});
-  const [printing, setPrinting] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [editingOrder, setEditingOrder] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(null);
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [customMedication, setCustomMedication] = useState({
+    name: '',
+    strength: '',
+    quantity: 1,
+    unitPrice: '',
+    instructions: '',
+    dosageForm: 'Tablet',
+    frequency: '',
+    frequencyPeriod: '',
+    duration: '',
+    durationPeriod: 'days',
+    route: ''
+  });
 
   useEffect(() => {
     fetchServices();
+  }, []);
+
+  useEffect(() => {
     fetchExistingOrders();
   }, [visit?.id]);
 
@@ -29,7 +58,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
       setFetchingData(true);
       const response = await api.get('/doctors/services?category=EMERGENCY_DRUG');
       const emergencyDrugs = (response.data.services || []).filter(
-        service => service.category === 'EMERGENCY_DRUG' && service.isActive
+        (service) => service.category === 'EMERGENCY_DRUG' && service.isActive
       );
       setServices(emergencyDrugs);
     } catch (error) {
@@ -46,72 +75,165 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
       const response = await api.get(`/emergency/drugs?visitId=${visit.id}`);
       setExistingOrders(response.data.orders || []);
     } catch (error) {
-      console.error('Error fetching existing orders:', error);
+      console.error('Error fetching existing emergency orders:', error);
     }
   };
 
-  const toggleService = (service) => {
-    setSelectedServices(prev => {
-      const exists = prev.find(s => s.id === service.id);
-      if (exists) {
-        const newQuantities = { ...quantities };
-        const newDetails = { ...medDetails };
-        delete newQuantities[service.id];
-        delete newDetails[service.id];
-        setQuantities(newQuantities);
-        setMedDetails(newDetails);
-        return prev.filter(s => s.id !== service.id);
-      } else {
-        setQuantities({ ...quantities, [service.id]: 1 });
-        setMedDetails({
-          ...medDetails,
-          [service.id]: {
-            dosageForm: 'Injection',
-            strength: '',
-            frequency: '',
-            frequencyPeriod: '',
-            duration: '',
-            durationPeriod: 'days',
-            route: '',
-            instructions: ''
-          }
-        });
-        return [...prev, service];
+  const filteredServices = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return [];
+    return services
+      .filter((service) => {
+        const name = (service.name || '').toLowerCase();
+        const code = (service.code || '').toLowerCase();
+        return name.includes(q) || code.includes(q);
+      })
+      .slice(0, 20);
+  }, [services, searchTerm]);
+
+  const addMedicationFromSearch = (service) => {
+    const exists = selectedMedications.some((med) => med.serviceId === service.id);
+    if (exists) {
+      toast.error('Medication already added');
+      return;
+    }
+
+    setSelectedMedications((prev) => [
+      ...prev,
+      {
+        ...DEFAULT_MEDICATION,
+        serviceId: service.id,
+        name: service.name,
+        unitPrice: Number(service.price) || 0
       }
+    ]);
+    setSearchTerm('');
+  };
+
+  const addCustomMedication = () => {
+    const name = (customMedication.name || '').trim();
+    if (!name) {
+      toast.error('Please enter medication name');
+      return;
+    }
+
+    const quantity = Math.max(1, parseInt(customMedication.quantity, 10) || 1);
+    const unitPrice = Number(customMedication.unitPrice);
+
+    setSelectedMedications((prev) => [
+      ...prev,
+      {
+        ...DEFAULT_MEDICATION,
+        isCustom: true,
+        name,
+        strength: customMedication.strength || '',
+        quantity,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : 5,
+        instructions: customMedication.instructions || '',
+        dosageForm: customMedication.dosageForm || 'Tablet',
+        frequency: customMedication.frequency || '',
+        frequencyPeriod: customMedication.frequencyPeriod || '',
+        duration: customMedication.duration || '',
+        durationPeriod: customMedication.durationPeriod || 'days',
+        route: customMedication.route || ''
+      }
+    ]);
+
+    setCustomMedication({
+      name: '',
+      strength: '',
+      quantity: 1,
+      unitPrice: '',
+      instructions: '',
+      dosageForm: 'Tablet',
+      frequency: '',
+      frequencyPeriod: '',
+      duration: '',
+      durationPeriod: 'days',
+      route: ''
+    });
+
+    setShowCustomForm(false);
+    toast.success('Custom emergency medication added');
+  };
+
+  const updateMedication = (index, field, value) => {
+    setSelectedMedications((prev) => {
+      const updated = [...prev];
+      updated[index] = {
+        ...updated[index],
+        [field]: field === 'quantity' ? Math.max(1, parseInt(value, 10) || 1) : value
+      };
+      return updated;
     });
   };
 
-  const updateQuantity = (serviceId, quantity) => {
-    setQuantities({ ...quantities, [serviceId]: Math.max(1, parseInt(quantity) || 1) });
-  };
-
-  const updateMedDetail = (serviceId, field, value) => {
-    setMedDetails({
-      ...medDetails,
-      [serviceId]: {
-        ...medDetails[serviceId],
-        [field]: value
-      }
-    });
+  const removeMedication = (index) => {
+    setSelectedMedications((prev) => prev.filter((_, i) => i !== index));
   };
 
   const calculateTotal = () => {
-    return selectedServices.reduce((sum, service) => {
-      const qty = quantities[service.id] || 1;
-      return sum + (service.price * qty);
+    return selectedMedications.reduce((sum, med) => {
+      return sum + ((Number(med.unitPrice) || 0) * (Number(med.quantity) || 1));
     }, 0);
   };
 
-  const handleDeleteOrder = async (orderId) => {
-    if (!window.confirm('Are you sure you want to delete this emergency drug order?')) return;
+  const handleSubmitOrder = async () => {
+    if (selectedMedications.length === 0) {
+      toast.error('Please add at least one emergency medication');
+      return;
+    }
+
+    setLoading(true);
     try {
-      setDeleteLoading(orderId);
-      await api.delete(`/emergency/drug-order/${orderId}`);
-      toast.success('Emergency drug order deleted');
+      for (const med of selectedMedications) {
+        const payload = {
+          visitId: visit?.id || null,
+          patientId: visit?.patient?.id,
+          quantity: Number(med.quantity) || 1,
+          instructions: med.instructions || '',
+          dosageForm: med.dosageForm || null,
+          strength: med.strength || null,
+          frequency: med.frequency || null,
+          frequencyPeriod: med.frequencyPeriod || null,
+          duration: med.duration || null,
+          durationPeriod: med.durationPeriod || null,
+          route: med.route || null
+        };
+
+        if (med.isCustom) {
+          payload.customName = med.name;
+          payload.customStrength = med.strength || '';
+          payload.customUnitPrice = Number(med.unitPrice) || 5;
+        } else {
+          payload.serviceId = med.serviceId;
+        }
+
+        await api.post('/emergency/drugs', payload);
+      }
+
+      toast.success(`${selectedMedications.length} emergency medication(s) ordered`);
+      setSelectedMedications([]);
       await fetchExistingOrders();
       if (onOrdersPlaced) onOrdersPlaced();
     } catch (error) {
-      console.error('Error deleting emergency drug order:', error);
+      console.error('Error creating emergency medication orders:', error);
+      toast.error(error.response?.data?.error || 'Failed to create emergency medication orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteOrder = async (orderId) => {
+    if (!window.confirm('Are you sure you want to delete this emergency medication order?')) return;
+    try {
+      setDeleteLoading(orderId);
+      await api.delete(`/emergency/drug-order/${orderId}`);
+      toast.success('Emergency medication order deleted');
+      await fetchExistingOrders();
+      if (onOrdersPlaced) onOrdersPlaced();
+    } catch (error) {
+      console.error('Error deleting emergency medication order:', error);
       toast.error(error.response?.data?.error || 'Failed to delete order');
     } finally {
       setDeleteLoading(null);
@@ -122,58 +244,13 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
     e.preventDefault();
     try {
       await api.patch(`/emergency/drug-order/${editingOrder.id}`, editingOrder);
-      toast.success('Emergency drug order updated');
+      toast.success('Emergency medication order updated');
       setEditingOrder(null);
       await fetchExistingOrders();
       if (onOrdersPlaced) onOrdersPlaced();
     } catch (error) {
-      console.error('Error updating emergency drug order:', error);
+      console.error('Error updating emergency medication order:', error);
       toast.error(error.response?.data?.error || 'Failed to update order');
-    }
-  };
-
-  const handleSubmitOrder = async () => {
-    if (selectedServices.length === 0) {
-      toast.error('Please select at least one emergency drug');
-      return;
-    }
-    setLoading(true);
-    try {
-      const orders = [];
-      for (const service of selectedServices) {
-        const qty = quantities[service.id] || 1;
-        const details = medDetails[service.id] || {};
-        const orderData = {
-          visitId: visit?.id || null,
-          patientId: visit?.patient?.id,
-          serviceId: service.id,
-          quantity: qty,
-          instructions: details.instructions || instructions,
-          notes,
-          dosageForm: details.dosageForm,
-          strength: details.strength,
-          frequency: details.frequency,
-          frequencyPeriod: details.frequencyPeriod,
-          duration: details.duration,
-          durationPeriod: details.durationPeriod,
-          route: details.route
-        };
-        const response = await api.post('/emergency/drugs', orderData);
-        orders.push(response.data);
-      }
-      toast.success(`${orders.length} emergency drug order(s) created successfully!`);
-      setSelectedServices([]);
-      setQuantities({});
-      setMedDetails({});
-      setInstructions('');
-      setNotes('');
-      await fetchExistingOrders();
-      if (onOrdersPlaced) onOrdersPlaced();
-    } catch (error) {
-      console.error('Error creating emergency drug orders:', error);
-      toast.error(error.response?.data?.error || 'Failed to create emergency drug orders');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -183,22 +260,25 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
     return age;
   };
 
   const printPrescription = async () => {
-    const ordersToPrint = existingOrders.length > 0 ? existingOrders : selectedServices.map(s => ({
-      ...medDetails[s.id],
-      service: s,
-      quantity: quantities[s.id],
-      doctor: visit?.doctor
-    }));
+    const medicationsToPrint = existingOrders.length > 0
+      ? existingOrders.map((order) => ({
+          name: order.service?.name || 'Unknown Medication',
+          instructions: order.instructions || '',
+          strength: order.strength || ''
+        }))
+      : selectedMedications.map((med) => ({
+          name: med.name,
+          instructions: med.instructions || '',
+          strength: med.strength || ''
+        }));
 
-    if (ordersToPrint.length === 0) {
-      toast.error('No emergency drugs to print.');
+    if (medicationsToPrint.length === 0) {
+      toast.error('No medications to print');
       return;
     }
 
@@ -206,23 +286,22 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
       setPrinting(true);
       const patientName = visit?.patient?.name || 'N/A';
       const patientAge = visit?.patient?.dob ? calculateAge(visit.patient.dob) : 'N/A';
-      const patientGender = visit?.patient?.gender || 'N/A';
+      const patientGender = (visit?.patient?.gender || 'N/A').charAt(0).toUpperCase();
       const patientCardNumber = visit?.patient?.id || 'N/A';
-      const firstOrder = ordersToPrint[0];
-      const doctorName = firstOrder?.doctor?.fullname || 'Dr. Unknown';
-      const doctorQualification = firstOrder?.doctor?.qualifications?.join(', ') || 'Medical Doctor';
+      const doctorName = visit?.doctor?.fullname || 'Dr. Unknown';
+      const doctorQualification = visit?.doctor?.qualifications?.join(', ') || 'General Practitioner';
       const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const visitUid = visit?.visitUid || visit?.id?.toString().substring(0, 8) || 'N/A';
 
       const printWindow = window.open('', '_blank');
       if (!printWindow) {
-        toast.error('Popup blocked!');
+        toast.error('Popup blocked! Please allow popups for this site.');
+        setPrinting(false);
         return;
       }
 
-      const visitUid = visit?.visitUid || visit?.id?.toString().substring(0, 8) || 'EMR';
-
-      const prescriptionContent = `
+      const content = `
       <!DOCTYPE html>
       <html>
         <head>
@@ -230,48 +309,15 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
           <style>
             @media print {
               @page { size: A6; margin: 0 !important; }
-              html, body { 
-                margin: 0 !important; 
-                padding: 0 !important; 
-                background: white !important;
-                visibility: visible !important;
-                display: flex !important;
-                flex-direction: column !important;
-                align-items: center !important;
-                overflow: visible !important;
-              }
+              html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
               * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: black !important; }
               .no-print { display: none !important; }
-              .prescription-container { 
-                width: 105mm !important; 
-                min-height: 148mm !important; 
-                margin: 0 auto !important; 
-                padding: 8mm !important; 
-                border: none !important; 
-                box-shadow: none !important; 
-                background: white !important;
-                display: block !important;
-                position: relative !important;
-                overflow: hidden !important;
-                box-sizing: border-box !important;
-                visibility: visible !important;
-              }
+              .prescription-container { width: 105mm !important; min-height: 148mm !important; margin: 0 auto !important; padding: 8mm !important; border: none !important; box-shadow: none !important; background: white !important; box-sizing: border-box !important; }
             }
-            body { 
-              font-family: 'Segoe UI', Tahoma, sans-serif; 
-              margin: 0; 
-              padding: 20px; 
-              color: #333; 
-              line-height: 1.3; 
-              background: #f3f4f6; 
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              min-height: 100vh;
-            }
+            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; color: #333; line-height: 1.3; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
             .no-print { padding: 10px; background: #fff; margin-bottom: 20px; border-radius: 8px; width: 100%; max-width: 300px; text-align: center; }
             .no-print button { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; }
-            .prescription-container { width: 105mm; min-height: 148mm; background: white; padding: 8mm; box-shadow: 0 10px 25px rgba(0,0,0,0.1); position: relative; box-sizing: border-box; display: block; margin: 0 auto; }
+            .prescription-container { width: 105mm; min-height: 148mm; background: white; padding: 8mm; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box; margin: 0 auto; }
             .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #2563eb; }
             .header-left { display: flex; align-items: center; gap: 8px; }
             .logo { width: 40px; height: 40px; object-fit: contain; }
@@ -282,10 +328,9 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
             .patient-section { margin-bottom: 12px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 11px; }
             .info-label { font-weight: 700; color: #64748b; }
             .medications-section h3 { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 2px; }
-            .medication-item { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; width: 100%; }
+            .medication-item { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; }
             .medication-name { font-weight: 700; font-size: 12px; color: #0f172a; margin-bottom: 2px; }
             .medication-details { font-size: 11px; color: #334155; font-weight: 500; }
-            .checkmark { color: #2563eb; font-weight: bold; margin-right: 4px; }
             .footer { margin-top: auto; padding-top: 10px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; }
             .doctor-name { font-weight: 700; color: #1e293b; font-size: 11px; }
             .signature-box { width: 100px; border-top: 1px solid #334155; padding-top: 4px; text-align: center; font-size: 8px; color: #64748b; }
@@ -303,11 +348,8 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                 </div>
               </div>
               <div class="header-right">
-                <h2 class="report-title">Emergency Orders</h2>
-                <div class="report-info">
-                  Date: ${currentDate}<br>
-                  Time: ${currentTime}
-                </div>
+                <h2 class="report-title">Prescription</h2>
+                <div class="report-info">Date: ${currentDate}<br>Time: ${currentTime}</div>
               </div>
             </div>
             <div class="patient-section">
@@ -317,22 +359,13 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
               <div style="text-align: right;"><span class="info-label">Visit ID:</span> #${visitUid}</div>
             </div>
             <div class="medications-section">
-              <h3>Drug Orders</h3>
-              ${ordersToPrint.map((order, idx) => {
-        const medName = order.service?.name || order.name || 'Unknown Medicine';
-        const cleanedName = formatMedicationName(medName);
-        const details = formatEmergencyInstruction(order);
-
-        return `
-                   <div class="medication-item">
-                    <div class="medication-name"># ${idx + 1}. ${cleanedName}</div>
-                    <div class="medication-details" style="padding-left: 25px;">
-                      <div>${details.instruction}</div>
-                      ${details.special ? `<div style="font-size: 11px; margin-top: 3px; color: #64748b; font-style: italic;">${details.special}</div>` : ''}
-                    </div>
-                  </div>
-                `;
-      }).join('')}
+              <h3>Prescribed Medications</h3>
+              ${medicationsToPrint.map((med, idx) => `
+                <div class="medication-item">
+                  <div class="medication-name"># ${idx + 1}. ${(formatMedicationName(med.name || '').toUpperCase())}</div>
+                  ${med.instructions ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${med.instructions}</div>` : ''}
+                </div>
+              `).join('')}
             </div>
             <div class="footer">
               <div>
@@ -344,13 +377,17 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
           </div>
         </body>
       </html>`;
-      printWindow.document.write(prescriptionContent);
+
+      printWindow.document.write(content);
       printWindow.document.close();
-      setTimeout(() => { printWindow.print(); setPrinting(false); }, 800);
+      setTimeout(() => {
+        printWindow.print();
+        setPrinting(false);
+      }, 700);
     } catch (error) {
       console.error('Print error:', error);
-      setPrinting(false);
       toast.error('Failed to print prescription');
+      setPrinting(false);
     }
   };
 
@@ -358,249 +395,257 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
     return (
       <div className="flex items-center justify-center py-12 bg-white rounded-xl border border-gray-100">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-red-600 mx-auto mb-3"></div>
-          <p className="text-gray-500 text-sm font-medium">Loading emergency medicine list...</p>
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div>
+          <p className="text-gray-500 text-sm font-medium">Loading emergency medications...</p>
         </div>
       </div>
     );
   }
 
-  const filteredServices = services.filter(service =>
-    service.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (service.code && service.code.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
-
-
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Step 1: Selection Area - List all admin-defined emergency meds */}
-      <div className="bg-white p-4 border rounded-xl" style={{ borderColor: '#E5E7EB' }}>
-        <div className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h4 className="font-semibold text-lg text-gray-900">Available Emergency Medications</h4>
-            <p className="text-sm text-gray-500">Select medications from the system list below</p>
-          </div>
-          <div className="relative flex-1 max-w-md">
-            <input
-              type="text"
-              placeholder="Search emergency drugs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 text-base border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-red-500 transition-all"
-            />
-            <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
+    <div className="space-y-6">
+      <div>
+        <h4 className="font-semibold mb-3" style={{ color: '#0C0E0B' }}>Search Emergency Medications</h4>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search emergency medication by name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+          />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {filteredServices.length === 0 ? (
-            <div className="col-span-full py-10 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-              <Pill className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-              <p className="text-gray-500 text-sm">No matching medications found.</p>
-            </div>
-          ) : (
-            filteredServices.map((service) => {
-              const isSelected = selectedServices.some(s => s.id === service.id);
-              return (
-                <div
-                  key={service.id}
-                  onClick={() => toggleService(service)}
-                  className={`p-3 rounded-lg border cursor-pointer transition-all duration-200 flex flex-col justify-between group active:scale-95 ${isSelected
-                    ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-100'
-                    : 'border-gray-200 bg-white hover:border-blue-300 hover:bg-gray-50'
-                    }`}
-                >
-                  <div className="mb-2">
-                    <div className={`text-[10px] uppercase mb-0.5 tracking-wider ${isSelected ? 'text-blue-600' : 'text-gray-400'}`}>
-                      {service.code || 'Med'}
-                    </div>
-                    <h5 className={`font-medium text-sm leading-tight transition-colors ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>
-                      {service.name}
-                    </h5>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-2 border-t border-gray-100 mt-auto">
-                    <span className={`text-xs font-medium ${isSelected ? 'text-blue-600' : 'text-gray-500'}`}>
-                      {service.price?.toFixed(2)} ETB
-                    </span>
-                    {isSelected ? (
-                      <CheckCircle className="h-4 w-4 text-blue-600" />
-                    ) : (
-                      <Plus className="h-4 w-4 text-gray-300 group-hover:text-blue-500" />
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-
-      {/* Step 2: Prescription Section - Detail inputs for selected items */}
-      {selectedServices.length > 0 && (
-        <div className="space-y-4">
-          <h4 className="font-semibold" style={{ color: '#0C0E0B' }}>Emergency Prescription ({selectedServices.length} items)</h4>
-          <div className="space-y-4">
-            {selectedServices.map((service, index) => (
-              <div key={service.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-                <div className="flex justify-between items-start mb-4">
+        {filteredServices.length > 0 && (
+          <div className="mt-3 border border-gray-200 rounded-lg max-h-64 overflow-y-auto bg-white shadow-sm">
+            {filteredServices.map((service) => (
+              <div
+                key={service.id}
+                className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                onClick={() => addMedicationFromSearch(service)}
+              >
+                <div className="flex justify-between items-center">
                   <div>
-                    <h5 className="font-medium text-gray-900">{index + 1}. {service.name}</h5>
-                    <p className="text-sm text-gray-500">{service.code || 'System Emergency Med'}</p>
-                    {/* Price calculation display */}
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="text-xs text-gray-500">
-                        {service.price?.toFixed(2)} ETB × {quantities[service.id] || 1}
-                      </span>
-                      <span className="text-xs text-gray-400">=</span>
-                      <span className="text-xs font-semibold text-blue-600">
-                        {(service.price * (quantities[service.id] || 1)).toFixed(2)} ETB
-                      </span>
-                    </div>
+                    <p className="font-medium text-gray-900">{service.name}</p>
+                    <p className="text-xs text-gray-500">{service.code || 'Emergency Medication'}</p>
                   </div>
-                  <button
-                    onClick={() => toggleService(service)}
-                    className="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-50 transition-colors"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Strength</label>
-                    <input
-                      type="text"
-                      value={medDetails[service.id]?.strength || ''}
-                      onChange={(e) => updateMedDetail(service.id, 'strength', e.target.value)}
-                      placeholder="e.g. 500mg"
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Dosage Form</label>
-                    <select
-                      value={medDetails[service.id]?.dosageForm || 'Injection'}
-                      onChange={(e) => updateMedDetail(service.id, 'dosageForm', e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="Injection">Injection</option>
-                      <option value="Infusion">Infusion</option>
-                      <option value="Syrup">Syrup</option>
-                      <option value="Tablet">Tablet</option>
-                      <option value="Capsule">Capsule</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Frequency *</label>
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <label className="block text-[10px] text-gray-500 mb-0.5 uppercase">Amount</label>
-                        <input
-                          type="text"
-                          value={medDetails[service.id]?.frequency || ''}
-                          onChange={(e) => updateMedDetail(service.id, 'frequency', e.target.value)}
-                          placeholder="2"
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="w-1/2">
-                        <label className="block text-[10px] text-gray-500 mb-0.5 uppercase">Period</label>
-                        <select
-                          value={medDetails[service.id]?.frequencyPeriod || ''}
-                          onChange={(e) => updateMedDetail(service.id, 'frequencyPeriod', e.target.value)}
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="">-</option>
-                          <option value="OD">OD</option>
-                          <option value="BD">BD</option>
-                          <option value="TID">TID</option>
-                          <option value="QID">QID</option>
-                          <option value="Stat">Stat</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={medDetails[service.id]?.duration || ''}
-                        onChange={(e) => updateMedDetail(service.id, 'duration', e.target.value)}
-                        placeholder="7"
-                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      />
-                      <select
-                        value={medDetails[service.id]?.durationPeriod || 'days'}
-                        onChange={(e) => updateMedDetail(service.id, 'durationPeriod', e.target.value)}
-                        className="w-20 px-2 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="days">Days</option>
-                        <option value="weeks">Weeks</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={quantities[service.id] || 1}
-                      onChange={(e) => updateQuantity(service.id, e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-center font-medium"
-                      placeholder="1"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Route</label>
-                    <select
-                      value={medDetails[service.id]?.route || ''}
-                      onChange={(e) => updateMedDetail(service.id, 'route', e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select Route</option>
-                      <option value="IV">IV (Intravenous)</option>
-                      <option value="IM">IM (Intramuscular)</option>
-                      <option value="SC">SC (Subcutaneous)</option>
-                      <option value="PO">PO (Oral)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Special Instructions</label>
-                    <input
-                      type="text"
-                      value={medDetails[service.id]?.instructions || ''}
-                      onChange={(e) => updateMedDetail(service.id, 'instructions', e.target.value)}
-                      placeholder="e.g. STAT then BD"
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+                  <span className="text-xs font-semibold text-blue-600">{Number(service.price || 0).toFixed(2)} ETB</span>
                 </div>
               </div>
             ))}
           </div>
+        )}
+      </div>
 
-          <div className="mt-6 flex flex-col md:flex-row justify-between items-center bg-white p-4 border rounded-xl shadow-sm gap-4">
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="font-semibold" style={{ color: '#0C0E0B' }}>Custom Emergency Medication</h4>
+          <button
+            onClick={() => setShowCustomForm(!showCustomForm)}
+            className="flex items-center px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4 mr-1" />
+            {showCustomForm ? 'Cancel' : 'Add Custom'}
+          </button>
+        </div>
+
+        {showCustomForm && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 shadow-sm space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Medication Name *</label>
+                <input
+                  type="text"
+                  value={customMedication.name}
+                  onChange={(e) => setCustomMedication({ ...customMedication, name: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="e.g. Paracetamol"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Strength</label>
+                <input
+                  type="text"
+                  value={customMedication.strength}
+                  onChange={(e) => setCustomMedication({ ...customMedication, strength: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="e.g. 500mg"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Unit Price (ETB)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={customMedication.unitPrice}
+                  onChange={(e) => setCustomMedication({ ...customMedication, unitPrice: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="Default 5.00"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={customMedication.quantity}
+                  onChange={(e) => setCustomMedication({ ...customMedication, quantity: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Frequency</label>
+                <input
+                  type="text"
+                  value={customMedication.frequency}
+                  onChange={(e) => setCustomMedication({ ...customMedication, frequency: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="e.g. 2"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Duration</label>
+                <input
+                  type="text"
+                  value={customMedication.duration}
+                  onChange={(e) => setCustomMedication({ ...customMedication, duration: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="e.g. 5"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Route</label>
+                <input
+                  type="text"
+                  value={customMedication.route}
+                  onChange={(e) => setCustomMedication({ ...customMedication, route: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="e.g. PO"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-indigo-900 mb-1.5">Instructions (Quantity, Frequency, Duration, Route)</label>
+              <textarea
+                value={customMedication.instructions}
+                onChange={(e) => setCustomMedication({ ...customMedication, instructions: e.target.value })}
+                className="w-full px-4 py-2.5 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
+                placeholder="e.g. 1 tablet twice daily for 5 days after meals"
+                rows={3}
+              />
+            </div>
+
+            <div className="pt-3 border-t border-indigo-200">
+              <button
+                onClick={addCustomMedication}
+                className="flex items-center px-4 py-2.5 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-colors"
+              >
+                <Save className="h-5 w-5 mr-2" />
+                Add Custom Medication
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selectedMedications.length > 0 && (
+        <div className="space-y-4">
+          <h4 className="font-semibold text-gray-900">Current Emergency Prescription</h4>
+          {selectedMedications.map((medication, index) => (
+            <div key={`${medication.name}-${index}`} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm border-l-4 border-l-blue-500">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h5 className="font-bold text-gray-900 text-lg">{index + 1}. {medication.name}{medication.strength ? ` ${medication.strength}` : ''}</h5>
+                  <p className="text-xs text-gray-500">{(Number(medication.unitPrice) || 0).toFixed(2)} ETB per unit</p>
+                </div>
+                <button
+                  onClick={() => removeMedication(index)}
+                  className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition-colors"
+                >
+                  <Trash2 className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={medication.quantity}
+                    onChange={(e) => updateMedication(index, 'quantity', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
+                  <input
+                    type="text"
+                    value={medication.frequency}
+                    onChange={(e) => updateMedication(index, 'frequency', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. 2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
+                  <input
+                    type="text"
+                    value={medication.duration}
+                    onChange={(e) => updateMedication(index, 'duration', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. 5"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Route</label>
+                  <input
+                    type="text"
+                    value={medication.route}
+                    onChange={(e) => updateMedication(index, 'route', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. PO"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                <textarea
+                  value={medication.instructions}
+                  onChange={(e) => updateMedication(index, 'instructions', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  rows={2}
+                />
+              </div>
+
+              <div className="mt-2 text-sm font-semibold text-blue-700">
+                Line Total: {((Number(medication.unitPrice) || 0) * (Number(medication.quantity) || 1)).toFixed(2)} ETB
+              </div>
+            </div>
+          ))}
+
+          <div className="flex flex-col items-end space-y-3 pt-4 border-t">
             <div className="text-lg font-bold text-gray-900">
               Total Order Value: <span className="text-blue-600">{calculateTotal().toFixed(2)} ETB</span>
             </div>
             <button
               onClick={handleSubmitOrder}
               disabled={loading}
-              className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-8 rounded-lg shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+              className="w-full font-bold py-4 rounded-xl shadow-lg transition-all transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
             >
               {loading ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
               ) : (
                 <>
-                  <Pill className="h-4 w-4" />
-                  SUBMIT EMERGENCY PRESCRIPTION
+                  <CheckCircle className="h-6 w-6" />
+                  <span>Complete Emergency Prescription</span>
                 </>
               )}
             </button>
@@ -608,42 +653,30 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
         </div>
       )}
 
-      {/* Existing Orders History */}
       {existingOrders.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 mt-6">
           <div className="flex justify-between items-center mb-4">
-            <h4 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Clock className="h-4 w-4 text-blue-500" />
-              Prescribed Emergency Meds (Visit)
-            </h4>
+            <h4 className="font-semibold text-gray-900">Prescribed Emergency Medication Record</h4>
             <button
               onClick={printPrescription}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg text-sm transition-all shadow-md"
+              disabled={printing}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50"
             >
-              <Printer className="h-4 w-4" />
-              Print Prescription
+              <Printer className="h-4 w-4" /> {printing ? 'Preparing...' : 'Print Prescription'}
             </button>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {existingOrders.map((order) => (
-              <div key={order.id} className="p-4 bg-gray-50 border border-gray-200 rounded-lg flex justify-between items-center">
-                <div className="flex flex-col">
-                  <span className="font-medium text-sm text-gray-900">{order.service?.name}</span>
-                  <span className="text-xs text-gray-500 mt-1">
-                    {order.dosageForm} {order.strength} • {order.frequency} {order.frequencyPeriod}
-                  </span>
-                  <span className="text-[10px] text-gray-400 mt-1 uppercase font-semibold">Qty: {order.quantity}</span>
+          <div className="space-y-3">
+            {existingOrders.map((order, idx) => (
+              <div key={order.id} className="p-3 bg-gray-50 border rounded-lg flex justify-between items-center">
+                <div className="flex-1">
+                  <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.service?.name || 'Unknown Medication')}</p>
+                  {order.instructions && (
+                    <p className="text-xs text-gray-600 ml-4 italic">{order.instructions}</p>
+                  )}
+                  <p className="text-[11px] text-gray-500 ml-4">Qty: {order.quantity} {order.service?.price ? `| ${(Number(order.service.price) * Number(order.quantity || 1)).toFixed(2)} ETB` : ''}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="flex flex-col items-end">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${order.status === 'PAID' ? 'bg-green-100 text-green-700' :
-                      order.status === 'COMPLETED' ? 'bg-blue-100 text-blue-700' :
-                        'bg-yellow-100 text-yellow-700'
-                      }`}>
-                      {order.status}
-                    </span>
-                  </div>
+                  <span className="text-xs font-bold text-blue-600 uppercase">{order.status}</span>
                   {order.status === 'UNPAID' && (
                     <div className="flex gap-1">
                       <button
@@ -676,114 +709,82 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
         </div>
       )}
 
-      {/* Edit Emergency Drug Modal */}
       {editingOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
             <div className="px-6 py-4 border-b flex justify-between items-center">
-              <h3 className="text-lg font-bold">Edit Emergency Medicine Order</h3>
+              <h3 className="text-lg font-bold">Edit Emergency Medication Order</h3>
               <button onClick={() => setEditingOrder(null)} className="text-gray-400 hover:text-gray-600">
-                <Plus className="h-6 w-6 transform rotate-45" />
+                <X className="h-5 w-5" />
               </button>
             </div>
             <form onSubmit={handleUpdateOrder} className="p-6">
-              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-4">
-                <p className="text-sm font-medium text-blue-800">{editingOrder.service?.name}</p>
-                <p className="text-xs text-blue-600">Original service price: {editingOrder.service?.price?.toFixed(2)} ETB</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div className="space-y-4 mb-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editingOrder.quantity}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, quantity: parseInt(e.target.value) || 1 })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Strength</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Medication Name</label>
                   <input
                     type="text"
-                    value={editingOrder.strength || ''}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, strength: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    value={editingOrder.service?.name || ''}
+                    disabled
+                    className="w-full px-3 py-2 border rounded-lg bg-gray-100"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Dosage Form</label>
-                  <select
-                    value={editingOrder.dosageForm || 'Injection'}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, dosageForm: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="Injection">Injection</option>
-                    <option value="Infusion">Infusion</option>
-                    <option value="Syrup">Syrup</option>
-                    <option value="Tablet">Tablet</option>
-                    <option value="Capsule">Capsule</option>
-                  </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editingOrder.quantity}
+                      onChange={(e) => setEditingOrder({ ...editingOrder, quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Strength</label>
+                    <input
+                      type="text"
+                      value={editingOrder.strength || ''}
+                      onChange={(e) => setEditingOrder({ ...editingOrder, strength: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Frequency Period</label>
-                  <select
-                    value={editingOrder.frequencyPeriod || ''}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, frequencyPeriod: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">-</option>
-                    <option value="OD">OD</option>
-                    <option value="BD">BD</option>
-                    <option value="TID">TID</option>
-                    <option value="QID">QID</option>
-                    <option value="Stat">Stat</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Route</label>
-                  <select
-                    value={editingOrder.route || ''}
-                    onChange={(e) => setEditingOrder({ ...editingOrder, route: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select Route</option>
-                    <option value="IV">IV</option>
-                    <option value="IM">IM</option>
-                    <option value="SC">SC</option>
-                    <option value="PO">PO</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Instructions</label>
-                  <input
-                    type="text"
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                  <textarea
                     value={editingOrder.instructions || ''}
                     onChange={(e) => setEditingOrder({ ...editingOrder, instructions: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    rows={4}
                   />
                 </div>
               </div>
-
-              <div className="flex justify-end gap-3 pt-4 border-t">
+              <div className="flex justify-end gap-3 mt-6">
                 <button
                   type="button"
                   onClick={() => setEditingOrder(null)}
-                  className="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-50"
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-md"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700"
                 >
                   Update Order
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {selectedMedications.length === 0 && existingOrders.length === 0 && (
+        <div className="text-center py-8 border border-dashed border-gray-300 rounded-lg bg-gray-50">
+          <Pill className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+          <p className="text-sm text-gray-600">Search and add emergency medications to start prescribing.</p>
         </div>
       )}
     </div>

@@ -2379,7 +2379,7 @@ exports.exportFinancialReportExcel = async (req, res) => {
     }
 
     const csvContent = [
-      'Charite Medium Clinic - Financial Report',
+      'Selihom Medical Clinic - Financial Report',
       `Period: ${period === 'daily' ? 'Daily' : `${getMonthName(month)} ${year}`}`,
       `Revenue Type: ${revenueType}`,
       `Generated: ${new Date().toLocaleString()}`,
@@ -2488,7 +2488,7 @@ exports.exportFinancialReportPDF = async (req, res) => {
       pageMargins: [40, 60, 40, 60],
       content: [
         {
-          text: 'Charite Medium Clinic',
+          text: 'Selihom Medical Clinic',
           style: 'clinicName',
           alignment: 'center',
           margin: [0, 0, 0, 10]

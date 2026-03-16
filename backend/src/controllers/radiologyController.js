@@ -1634,7 +1634,7 @@ exports.generateRadiologyResultsPDF = async (req, res) => {
       console.log(`📸 [Radiology PDF] Creating PDF document definition...`);
       const docDefinition = createPDFDocument({
         paperSize: selectedPaperSize,
-        clinicName: 'Charite Medium Clinic',
+        clinicName: 'Selihom Medical Clinic',
         content: pdfContent,
         includeLogo: true,
         footerText: `Generated on: ${formatDateTime(new Date())}`

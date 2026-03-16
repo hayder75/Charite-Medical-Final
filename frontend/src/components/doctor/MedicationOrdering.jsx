@@ -599,11 +599,13 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, idx) => {
         const cleanedName = (med.name || '').toUpperCase();
+        const strength = med.strength || med.strengthText || '';
+        const dosageForm = med.dosageForm || '';
         const instructionText = med.instructions || med.instructionText || '';
 
         return `
                 <div class="medication-item">
-                          <div class="medication-name"># ${idx + 1}. ${cleanedName}</div>
+                          <div class="medication-name"># ${idx + 1}. ${cleanedName}${strength ? ' - ' + strength : ''}</div>
                   ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                 </div>
               `;

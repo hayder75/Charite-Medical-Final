@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Beaker, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown } from 'lucide-react';
+import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown } from 'lucide-react';
 import { getImageUrl } from '../../utils/imageUrl';
 import { checkValueInNormalRange } from '../../utils/normalRangeParser';
 import DentalChart from '../../components/dental/DentalChart';
@@ -20,10 +20,7 @@ import EmergencyDrugOrdering from '../../components/doctor/EmergencyDrugOrdering
 import ProcedureOrdering from '../../components/doctor/ProcedureOrdering';
 import MaterialNeedsOrdering from '../../components/nurse/MaterialNeedsOrdering';
 import AccommodationTab from '../../components/doctor/AccommodationTab';
-import CompoundPrescriptionBuilder from '../../components/doctor/CompoundPrescriptionBuilder';
 import Layout from '../../components/common/Layout';
-
-const getConsultationCacheKey = (doctorScope, visitId) => `doctor-consultation-cache:${doctorScope || 'unknown'}:${visitId || 'unknown'}`;
 
 const NOTE_FIELDS = [
   { key: 'chiefComplaint', label: 'Chief Complaint' },
@@ -246,16 +243,6 @@ const PatientConsultationPage = () => {
     return currentUser?.role === 'DERMATOLOGY' || qualifications.some((q) => q.includes('DERM'));
   }, [currentUser]);
 
-  const doctorCacheScope = useMemo(
-    () => currentUser?.id || currentUser?.userId || currentUser?.username || 'unknown',
-    [currentUser]
-  );
-
-  const consultationCacheKey = useMemo(
-    () => getConsultationCacheKey(doctorCacheScope, visitId),
-    [doctorCacheScope, visitId]
-  );
-
   // Memoize tabs array to prevent recreation on every render
   // Order: triage → vitals → patient-history → images → dental chart → dental services (only for dentists) → diagnosis notes → medication → emergency drugs → material needs → lab → radiology → nurse services
   const tabs = useMemo(() => {
@@ -269,7 +256,6 @@ const PatientConsultationPage = () => {
       ...(isDentalSpecialist ? [{ id: 'dental-services', label: 'Dental Services', icon: Smile }] : []), // Only show for dental specialists
       { id: 'notes', label: 'Diagnosis Notes', icon: FileText },
       { id: 'medications', label: 'Medications', icon: Pill },
-      { id: 'compound-prescription', label: 'Compound Rx', icon: Beaker },
       { id: 'emergency-drugs', label: 'Emergency Drugs', icon: AlertTriangle },
       { id: 'material-needs', label: 'Material Needs', icon: Package },
       { id: 'lab', label: 'Lab Orders', icon: TestTube },
@@ -290,34 +276,6 @@ const PatientConsultationPage = () => {
     console.debug('[Consultation] useEffect 2 - fetchVisitData called for visitId:', visitId);
     fetchVisitData();
   }, [visitId]);
-
-  // Hydrate from session cache first to keep consultation data visible on browser refresh.
-  useEffect(() => {
-    try {
-      if (!visitId) return;
-
-      const candidateKeys = [
-        consultationCacheKey,
-        getConsultationCacheKey('unknown', visitId),
-        getConsultationCacheKey(currentUser?.id, visitId)
-      ].filter(Boolean);
-
-      const raw = candidateKeys.map((k) => sessionStorage.getItem(k)).find(Boolean);
-      if (!raw) return;
-
-      const cached = JSON.parse(raw);
-      if (!cached?.visit) return;
-
-      setVisit(cached.visit);
-      setAllVitals(Array.isArray(cached.vitals) ? cached.vitals : []);
-      if (cached.dentalRecord) {
-        setDentalRecord(cached.dentalRecord);
-      }
-      setLoading(false);
-    } catch (cacheError) {
-      console.warn('[Consultation] Failed to restore session cache:', cacheError);
-    }
-  }, [consultationCacheKey, currentUser?.id, visitId]);
 
   // If current activeTab is not available for this user, switch to the first available tab
   useEffect(() => {
@@ -400,33 +358,12 @@ const PatientConsultationPage = () => {
         return;
       }
 
-      const normalizedVisit = {
-        ...response.data,
-        // Protect against occasional partial payloads on reload where patient relation may be missing.
-        patient: response.data?.patient || visit?.patient || null
-      };
-
-      // If still missing patient object, fetch patient summary and attach it before render/cache.
-      if (!normalizedVisit.patient && normalizedVisit.patientId) {
-        try {
-          const historyRes = await api.get(`/doctors/patient-history/${normalizedVisit.patientId}`);
-          if (historyRes?.data?.patient) {
-            normalizedVisit.patient = {
-              ...historyRes.data.patient,
-              mobile: historyRes.data.patient.phone || historyRes.data.patient.mobile
-            };
-          }
-        } catch (historyErr) {
-          console.warn('[Consultation] Could not hydrate patient from history:', historyErr?.message || historyErr);
-        }
-      }
-
-      setVisit(normalizedVisit);
+      setVisit(response.data);
 
       // Set all vitals from the visit data (already included)
       // Sort by createdAt descending to get most recent first
-      if (normalizedVisit.vitals && normalizedVisit.vitals.length > 0) {
-        const sortedVitals = [...normalizedVisit.vitals].sort((a, b) =>
+      if (response.data.vitals && response.data.vitals.length > 0) {
+        const sortedVitals = [...response.data.vitals].sort((a, b) =>
           new Date(b.createdAt) - new Date(a.createdAt)
         );
         setAllVitals(sortedVitals);
@@ -440,7 +377,7 @@ const PatientConsultationPage = () => {
       // Fetch dental record if user is a dentist
       if (currentUser?.qualifications?.includes('Dentist')) {
         try {
-          const dentalResponse = await api.get(`/dental/records/${normalizedVisit.patientId}/${visitId}`);
+          const dentalResponse = await api.get(`/dental/records/${response.data.patientId}/${visitId}`);
           setDentalRecord(dentalResponse.data.dentalRecord);
         } catch (error) {
           if (error.response?.status === 404) {
@@ -451,22 +388,6 @@ const PatientConsultationPage = () => {
             // Don't show error toast for dental records as 404 is expected
           }
         }
-      }
-
-      // Persist latest consultation snapshot per doctor+visit to survive refresh.
-      try {
-        const snapshot = {
-          visit: normalizedVisit,
-          vitals: normalizedVisit?.vitals || [],
-          dentalRecord,
-          savedAt: Date.now()
-        };
-        // Persist only meaningful snapshots to avoid overwriting good cache with patient-less payloads.
-        if (snapshot.visit?.id && snapshot.visit?.patient) {
-          sessionStorage.setItem(consultationCacheKey, JSON.stringify(snapshot));
-        }
-      } catch (cacheError) {
-        console.warn('[Consultation] Failed to persist cache:', cacheError);
       }
 
     } catch (error) {
@@ -481,12 +402,7 @@ const PatientConsultationPage = () => {
         toast.error('Access denied to this visit');
         navigate('/doctor/dashboard');
       } else {
-        // Keep current cached data on transient failures instead of showing blank N/A state.
-        if (!visit) {
-          toast.error('Failed to load patient data');
-        } else {
-          toast.error('Network issue: showing last loaded patient data');
-        }
+        toast.error('Failed to load patient data');
       }
     } finally {
       setLoading(false);
@@ -769,7 +685,7 @@ const PatientConsultationPage = () => {
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">Selihom Medical Clinic</div>
+            <div class="clinic-name">Charite Medium Clinic</div>
             <div>Laboratory Order Form</div>
           </div>
           
@@ -875,7 +791,7 @@ const PatientConsultationPage = () => {
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">Selihom Medical Clinic</div>
+            <div class="clinic-name">Charite Medium Clinic</div>
             <div>Radiology Order Form</div>
           </div>
           
@@ -968,23 +884,6 @@ const PatientConsultationPage = () => {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto" style={{ borderColor: '#2e13d1' }}></div>
             <p className="mt-4" style={{ color: '#0C0E0B' }}>Loading patient data...</p>
           </div>
-        </div>
-      </Layout>
-    );
-  }
-
-  if (!visit) {
-    return (
-      <Layout title="Patient Consultation" subtitle="Unable to load visit">
-        <div className="max-w-xl mx-auto bg-white border border-red-200 rounded-lg p-6 text-center">
-          <p className="text-lg font-semibold text-red-700 mb-2">Could not load consultation data</p>
-          <p className="text-sm text-gray-600 mb-4">Please return to queue and open the patient again.</p>
-          <button
-            onClick={() => navigate('/doctor/queue')}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Back to Queue
-          </button>
         </div>
       </Layout>
     );
@@ -1649,13 +1548,6 @@ const PatientConsultationPage = () => {
                                 Medications ({selectedVisit.medicationOrders?.length || 0})
                               </button>
                               <button
-                                onClick={() => setVisitDetailTab('compoundRx')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'compoundRx' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Compound Rx ({selectedVisit.compoundPrescriptions?.length || 0})
-                              </button>
-                              <button
                                 onClick={() => setVisitDetailTab('procedures')}
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'procedures' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
                                   }`}
@@ -1667,7 +1559,7 @@ const PatientConsultationPage = () => {
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'images' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
                                   }`}
                               >
-                                Images ({selectedVisit.files?.length || 0})
+                                Images ({(selectedVisit.attachedImages?.length || 0) + (selectedVisit.galleryImages?.length || 0)})
                               </button>
                               <button
                                 onClick={() => setVisitDetailTab('other')}
@@ -1999,59 +1891,6 @@ const PatientConsultationPage = () => {
                                 </div>
                               )}
 
-                              {/* Compound Prescriptions Tab */}
-                              {visitDetailTab === 'compoundRx' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg flex items-center gap-2">
-                                    🧪 Compound Prescriptions
-                                  </h4>
-                                  {selectedVisit.compoundPrescriptions && selectedVisit.compoundPrescriptions.length > 0 ? (
-                                    <div className="space-y-3">
-                                      {selectedVisit.compoundPrescriptions.map((cp, idx) => (
-                                        <div key={idx} className="p-4 border border-amber-200 rounded-lg bg-amber-50 shadow-sm">
-                                          <div className="flex justify-between items-start mb-2">
-                                            <div>
-                                              <p className="font-bold text-amber-900 text-lg">{cp.formulationType} - {cp.quantity}{cp.quantityUnit}</p>
-                                              <p className="text-xs font-mono text-amber-700">{cp.referenceNumber}</p>
-                                            </div>
-                                            <span className="px-2 py-1 bg-amber-200 text-amber-800 rounded text-xs font-medium">
-                                              {cp.status || 'PRESCRIBED'}
-                                            </span>
-                                          </div>
-                                          <div className="text-sm text-amber-800 mb-2 p-2 bg-white rounded border border-amber-100">
-                                            <span className="font-bold">Active Ingredients:</span>
-                                            <ul className="list-disc list-inside mt-1">
-                                              {cp.ingredients?.map((ing, i) => (
-                                                <li key={i}>{ing.ingredientName} <span className="font-mono">{ing.strength}{ing.unit}</span></li>
-                                              ))}
-                                            </ul>
-                                          </div>
-                                          <div className="flex flex-wrap gap-4 text-sm text-amber-800 mt-2">
-                                            {cp.frequencyType && (
-                                              <div>
-                                                <span className="font-medium">Sig:</span> {cp.frequencyType.replace(/_/g, ' ')}
-                                              </div>
-                                            )}
-                                            {cp.durationValue && (
-                                              <div>
-                                                <span className="font-medium">Duration:</span> {cp.durationValue} {cp.durationUnit?.toLowerCase()}
-                                              </div>
-                                            )}
-                                          </div>
-                                          {(cp.prescriptionText || cp.rawText || cp.instructions) && (
-                                            <div className="text-xs text-amber-700 italic mt-2 bg-amber-100 p-2 rounded">
-                                              Note: {cp.prescriptionText || cp.rawText || cp.instructions}
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No compound prescriptions for this visit</p>
-                                  )}
-                                </div>
-                              )}
-
                               {/* Procedures Tab */}
                               {visitDetailTab === 'procedures' && (
                                 <div className="space-y-4">
@@ -2080,18 +1919,60 @@ const PatientConsultationPage = () => {
                               {visitDetailTab === 'images' && (
                                 <div className="space-y-4">
                                   <h4 className="font-bold text-lg">Attached Images</h4>
-                                  {selectedVisit.files && selectedVisit.files.length > 0 ? (
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                      {selectedVisit.files.map((file, idx) => (
-                                        <div key={idx} className="p-2 border rounded-lg">
-                                          <img src={file.fileUrl} alt="Patient file" className="w-full h-24 object-cover rounded" />
-                                          <p className="text-xs mt-1 truncate">{file.fileName}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No images attached for this visit</p>
-                                  )}
+                                  {(() => {
+                                    const historicalImages = [
+                                      ...(selectedVisit.attachedImages || []).map((image) => ({
+                                        id: image.id,
+                                        filePath: image.filePath,
+                                        label: image.fileName || 'Attached image',
+                                        description: image.description,
+                                        uploadedAt: image.uploadedAt,
+                                        badge: null
+                                      })),
+                                      ...(selectedVisit.galleryImages || []).map((image) => ({
+                                        id: image.id,
+                                        filePath: image.filePath,
+                                        label: image.description || `${image.imageType || 'Gallery'} image`,
+                                        description: image.description,
+                                        uploadedAt: image.createdAt,
+                                        badge: image.imageType || 'GALLERY'
+                                      }))
+                                    ];
+
+                                    if (historicalImages.length === 0) {
+                                      return <p className="text-gray-500">No images attached for this visit</p>;
+                                    }
+
+                                    return (
+                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        {historicalImages.map((image) => (
+                                          <div key={image.id} className="p-2 border rounded-lg bg-white shadow-sm">
+                                            <div className="w-full h-24 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
+                                              <img
+                                                src={getImageUrl(image.filePath)}
+                                                alt={image.description || image.label}
+                                                className="w-full h-full object-cover"
+                                                onError={(e) => {
+                                                  e.target.style.display = 'none';
+                                                }}
+                                              />
+                                            </div>
+                                            {image.badge && (
+                                              <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700">
+                                                {image.badge}
+                                              </span>
+                                            )}
+                                            <p className="text-xs mt-1 truncate font-medium" title={image.label}>{image.label}</p>
+                                            {image.uploadedAt && (
+                                              <p className="text-[11px] text-gray-500 mt-1">
+                                                {new Date(image.uploadedAt).toLocaleDateString()}
+                                              </p>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               )}
 
@@ -3316,15 +3197,6 @@ const PatientConsultationPage = () => {
                   existingOrders={visit?.medicationOrders || []}
                 />
               </div>
-            </div>
-          )}
-
-          {activeTab === 'compound-prescription' && (
-            <div>
-              <CompoundPrescriptionBuilder
-                visit={visit}
-                onSaved={handleOrdersPlaced}
-              />
             </div>
           )}
 

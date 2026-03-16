@@ -135,7 +135,7 @@ const createHeader = (clinicName, sizes, logoBase64 = null) => {
         {
           stack: [
             {
-              text: clinicName || 'Charite Medium Clinic',
+              text: clinicName || 'Selihom Medical Clinic',
               style: 'clinicName',
               alignment: 'left',
               margin: [0, 0, 0, 5]
@@ -150,7 +150,7 @@ const createHeader = (clinicName, sizes, logoBase64 = null) => {
     });
   } else {
     headerContent.push({
-      text: clinicName || 'Charite Medium Clinic',
+      text: clinicName || 'Selihom Medical Clinic',
       style: 'clinicName',
       alignment: 'center',
       margin: [0, 0, 0, 5]
@@ -275,7 +275,7 @@ const generatePDF = async (docDefinition, outputPath) => {
 const createPDFDocument = (options = {}) => {
   const {
     paperSize = 'A4',
-    clinicName = 'Charite Medium Clinic',
+    clinicName = 'Selihom Medical Clinic',
     content = [],
     includeLogo = true,
     footerText = null,

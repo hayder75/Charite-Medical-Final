@@ -462,7 +462,7 @@ exports.exportInsuranceReportPDF = async (req, res) => {
       pageOrientation: 'landscape',
       content: [
         {
-          text: 'Charite Medium Clinic',
+          text: 'Selihom Medical Clinic',
           style: 'clinicName',
           alignment: 'center',
           margin: [0, 0, 0, 10]

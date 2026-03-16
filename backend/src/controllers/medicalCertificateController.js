@@ -454,7 +454,7 @@ exports.generatePDF = async (req, res) => {
       content: [
         // Header Section - Clinic Name
         {
-          text: 'Charite Medium Clinic',
+          text: 'Selihom Medical Clinic',
           style: 'clinicName',
           alignment: 'center',
           margin: [0, 0, 0, 5]

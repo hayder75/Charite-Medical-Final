@@ -163,9 +163,28 @@ const Reports = () => {
 
     try {
       const response = await api.get(`/admin/reports/doctor-daily-breakdown?doctorId=${doctorId}&year=${selectedYear}&month=${selectedMonth}`);
-      setDoctorDailyBreakdown(response.data.dailyData || []);
-      setSelectedDoctorDay(null);
+      const dailyData = response.data.dailyData || [];
+      setDoctorDailyBreakdown(dailyData);
+
+      const today = new Date();
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const selectedDateInMonth = selectedDate?.startsWith(`${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-`)
+        ? selectedDate
+        : null;
+
+      const initialDay =
+        dailyData.find((d) => d.date === selectedDateInMonth) ||
+        dailyData.find((d) => d.date === todayKey) ||
+        dailyData.find((d) => (d.totalOrders || d.procedureOrders || 0) > 0 || (d.totalRevenue || d.revenue || 0) > 0 || (d.patients || 0) > 0) ||
+        null;
+
+      setSelectedDoctorDay(initialDay);
       setSelectedDoctorDayDetails(null);
+
+      if (initialDay?.date) {
+        setSelectedDate(initialDay.date);
+        fetchDoctorDayDetails(doctorId, initialDay.date);
+      }
     } catch (error) {
       console.error('Error fetching doctor daily breakdown:', error);
       toast.error('Failed to fetch doctor daily details');
@@ -430,12 +449,36 @@ const Reports = () => {
     );
   };
 
+  const getDoctorDayRevenue = () => selectedDoctorDay?.totalRevenue || selectedDoctorDay?.revenue || 0;
+
+  const getDoctorDayOrders = () => selectedDoctorDay?.totalOrders || selectedDoctorDay?.procedureOrders || 0;
+
+  const getDoctorDayLabel = () => {
+    if (!selectedDoctorDay?.date) return 'Doctor Ordered Revenue';
+
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    if (selectedDoctorDay.date === todayKey) {
+      return "Today's Doctor Ordered Revenue";
+    }
+
+    return `Doctor Ordered Revenue (${new Date(selectedDoctorDay.date).toLocaleDateString()})`;
+  };
+
+  const getDoctorOrdersLabel = () => {
+    if (!selectedDoctorDay?.date) return 'Doctor Orders';
+
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return selectedDoctorDay.date === todayKey ? "Today's Doctor Orders" : 'Doctor Orders (Selected Day)';
+  };
+
   // Get revenue data based on selected type
   const getRevenueData = () => {
     if (revenueType === 'doctors') {
       return {
-        revenue: doctorStats?.summary?.totalRevenue || doctorStats?.summary?.totalProcedureRevenue || 0,
-        transactions: doctorStats?.summary?.totalOrders || ((doctorStats?.summary?.totalProcedureOrders || 0) + (doctorStats?.summary?.totalLabOrders || 0) + (doctorStats?.summary?.totalEmergencyMedicationOrders || 0)),
+        revenue: getDoctorDayRevenue(),
+        transactions: getDoctorDayOrders(),
         label: 'Doctors'
       };
     }
@@ -709,7 +752,7 @@ const Reports = () => {
             <div class="header-left">
               <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
               <div class="clinic-info">
-                <h1 class="clinic-name">Selihom Medical Clinic</h1>
+                <h1 class="clinic-name">Charite Medium Clinic</h1>
                 <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
               </div>
             </div>
@@ -775,7 +818,7 @@ const Reports = () => {
           </div>
 
           <div class="print-footer">
-            Selihom Medical Clinic - Financial Analytics Report - Generated on ${new Date().toLocaleString()}
+            Charite Medium Clinic - Financial Analytics Report - Generated on ${new Date().toLocaleString()}
           </div>
         </body>
       </html>
@@ -899,7 +942,7 @@ const Reports = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">
                 {revenueType === 'doctors'
-                  ? 'Doctor Ordered Revenue'
+                  ? getDoctorDayLabel()
                   : revenueType === 'billing'
                     ? 'Processed Revenue'
                   : revenueType === 'combined'
@@ -911,7 +954,7 @@ const Reports = () => {
               <p className="text-2xl font-semibold text-gray-900">{formatCurrency(revenueData.revenue)}</p>
               <p className="text-xs text-gray-500 mt-1">
                 {revenueType === 'doctors'
-                  ? `${revenueData.transactions} total doctor orders`
+                  ? `${revenueData.transactions} doctor orders`
                   : revenueType === 'billing'
                     ? `${revenueData.transactions} processed transactions`
                   : `${revenueData.transactions} transactions`}
@@ -941,7 +984,7 @@ const Reports = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Patients Treated</p>
-                  <p className="text-2xl font-semibold text-gray-900">{doctorStats?.summary?.totalConsultations || 0}</p>
+                  <p className="text-2xl font-semibold text-gray-900">{selectedDoctorDay?.patients || 0}</p>
                 </div>
               </div>
             </div>
@@ -952,8 +995,8 @@ const Reports = () => {
                   <Activity className="h-6 w-6 text-emerald-600" />
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Doctor Orders</p>
-                  <p className="text-2xl font-semibold text-gray-900">{doctorStats?.summary?.totalOrders || ((doctorStats?.summary?.totalProcedureOrders || 0) + (doctorStats?.summary?.totalLabOrders || 0) + (doctorStats?.summary?.totalEmergencyMedicationOrders || 0))}</p>
+                  <p className="text-sm font-medium text-gray-600">{getDoctorOrdersLabel()}</p>
+                  <p className="text-2xl font-semibold text-gray-900">{getDoctorDayOrders()}</p>
                 </div>
               </div>
             </div>
@@ -1204,7 +1247,7 @@ const Reports = () => {
               <div className="text-right">
                 <p className="text-sm text-gray-600">
                   {revenueType === 'doctors'
-                    ? `Selected Doctor Ordered Revenue (${getMonthName(selectedMonth)})`
+                    ? getDoctorDayLabel()
                     : revenueType === 'billing'
                       ? `Selected Billing User Processed Revenue (${getMonthName(selectedMonth)})`
                     : `Monthly ${revenueType === 'combined' ? 'Total' : revenueType} Revenue`}
@@ -1212,7 +1255,7 @@ const Reports = () => {
                 <p className={`${isBillingCalendar ? 'text-xl' : 'text-2xl'} font-bold text-green-600`}>
                   {formatCurrency(
                     revenueType === 'doctors'
-                      ? (selectedDoctor?.totalRevenue || selectedDoctor?.procedureRevenue || 0)
+                      ? getDoctorDayRevenue()
                       : revenueType === 'billing'
                         ? (selectedBillingUser?.totalAmount || 0)
                         : revenueData.revenue
