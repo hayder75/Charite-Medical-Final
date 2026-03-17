@@ -262,19 +262,15 @@ const BillingPatientHistory = () => {
             <div class="medications-section">
               <h3>Prescribed Medications</h3>
               ${medicationsToPrint.map((med, index) => {
-        const cleanedName = formatMedicationName(med.name);
-        const strength = med.strength && med.strength !== 'N/A' ? med.strength : '';
-        const instructionLine = formatMedicationInstruction(med);
-        const medInstructions = med.instructions || med.additionalNotes || '';
-        const note = (medInstructions && medInstructions !== 'Custom medication - not in inventory') ? medInstructions : '';
+        const displayName = String(med.name || '').trim() || 'Unknown Medication';
+        const rawStrength = String(med.strength || '').trim();
+        const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
+        const instructionText = med.instructions || med.instructionText || med.additionalNotes || '';
 
         return `
                   <div class="medication-item">
-                    <div class="medication-name"># ${index + 1}. ${cleanedName} ${strength}</div>
-                    <div class="medication-details" style="padding-left: 25px;">
-                      ${instructionLine}
-                      ${note ? `<div style="font-size: 11px; color: #64748b; margin-top: 3px; font-style: italic;">Note: ${note}</div>` : ''}
-                    </div>
+                    <div class="medication-name"># ${index + 1}. ${displayName}${strengthSuffix}</div>
+                    ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                   </div>
                 `;
       }).join('')}
@@ -415,16 +411,15 @@ const BillingPatientHistory = () => {
             <div class="medications-section">
               <h3>Drug Orders</h3>
               ${selectedVisit.emergencyOrders.map((med, index) => {
-        const cleanedName = formatMedicationName(med.serviceName || med.name, med.strength);
-        const results = formatEmergencyInstruction(med);
+        const displayName = String(med.serviceName || med.name || '').trim() || 'Unknown Medication';
+        const rawStrength = String(med.strength || '').trim();
+        const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
+        const instructionText = med.instructions || med.instructionText || med.notes || '';
 
         return `
                   <div class="medication-item">
-                    <div class="medication-name"># ${index + 1}. ${cleanedName}</div>
-                    <div class="medication-details" style="padding-left: 25px;">
-                      <div>${results.instruction}</div>
-                      ${results.special || med.notes ? `<div style="font-size: 11px; margin-top: 3px; color: #64748b; font-style: italic;">${results.special || med.notes}</div>` : ''}
-                    </div>
+                    <div class="medication-name"># ${index + 1}. ${displayName}${strengthSuffix}</div>
+                    ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
                   </div>
                 `;
       }).join('')}
