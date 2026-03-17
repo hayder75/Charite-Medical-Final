@@ -17,6 +17,22 @@ import RadiologyOrdering from '../../components/doctor/RadiologyOrdering';
 import MedicationOrdering from '../../components/doctor/MedicationOrdering';
 import DentalServiceOrdering from '../../components/doctor/DentalServiceOrdering';
 import EmergencyDrugOrdering from '../../components/doctor/EmergencyDrugOrdering';
+
+const NON_CLINICAL_CUSTOM_NOTE = 'Custom medication - not in inventory';
+
+const resolveMedicationInstruction = (order) => {
+  const candidates = [order?.instructions, order?.instructionText, order?.additionalNotes];
+  const normalizedPlaceholder = NON_CLINICAL_CUSTOM_NOTE.toLowerCase();
+
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim();
+    if (!text) continue;
+    if (text.toLowerCase() === normalizedPlaceholder) continue;
+    return text;
+  }
+
+  return '';
+};
 import ProcedureOrdering from '../../components/doctor/ProcedureOrdering';
 import MaterialNeedsOrdering from '../../components/nurse/MaterialNeedsOrdering';
 import AccommodationTab from '../../components/doctor/AccommodationTab';
@@ -3779,6 +3795,10 @@ const PatientConsultationPage = () => {
                   <div className="space-y-3">
                     {visit.medicationOrders.map((order) => (
                       <div key={order.id} className="p-4 border rounded-lg" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
+                        {(() => {
+                          const medicationInstruction = resolveMedicationInstruction(order);
+
+                          return (
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
                             <div className="flex items-center justify-between">
@@ -3795,12 +3815,6 @@ const PatientConsultationPage = () => {
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </button>
-                              </div>
-                            </div>
-                            <div className="mt-2 grid grid-cols-1 gap-4 text-sm">
-                              <div>
-                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Quantity:</span>
-                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.quantity}</span>
                               </div>
                             </div>
 
@@ -3831,20 +3845,16 @@ const PatientConsultationPage = () => {
                                 </div>
                               </div>
                             )}
-                            {order.instructions && (
+                            {medicationInstruction && (
                               <div className="mt-3">
                                 <p className="text-sm font-medium mb-1" style={{ color: '#0C0E0B' }}>Instructions:</p>
-                                <p className="text-sm" style={{ color: '#6B7280' }}>{order.instructions}</p>
-                              </div>
-                            )}
-                            {order.additionalNotes && (
-                              <div className="mt-2">
-                                <p className="text-sm font-medium mb-1" style={{ color: '#0C0E0B' }}>Additional Notes:</p>
-                                <p className="text-sm" style={{ color: '#6B7280' }}>{order.additionalNotes}</p>
+                                <p className="text-sm" style={{ color: '#6B7280' }}>{medicationInstruction}</p>
                               </div>
                             )}
                           </div>
                         </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>

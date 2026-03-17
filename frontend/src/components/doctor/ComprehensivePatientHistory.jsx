@@ -13,6 +13,8 @@ import ImageViewer from '../common/ImageViewer';
 import { getImageUrl } from '../../utils/imageUrl';
 import { formatMedicationName, formatMedicationInstruction, formatEmergencyInstruction } from '../../utils/medicalStandards';
 
+const NON_CLINICAL_CUSTOM_NOTE = 'Custom medication - not in inventory';
+
 const ComprehensivePatientHistory = () => {
   const { user: currentUser } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -36,6 +38,68 @@ const ComprehensivePatientHistory = () => {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     return tmp.textContent || tmp.innerText || '';
+  };
+
+  const resolveMedicationInstruction = (medication) => {
+    const candidates = [medication?.instructions, medication?.instructionText, medication?.additionalNotes];
+    const normalizedPlaceholder = NON_CLINICAL_CUSTOM_NOTE.toLowerCase();
+
+    for (const candidate of candidates) {
+      const text = String(candidate || '').trim();
+      if (!text) continue;
+      if (text.toLowerCase() === normalizedPlaceholder) continue;
+      return text;
+    }
+
+    return '';
+  };
+
+  const getDoctorQualificationLabel = (doctorData, fallbackDoctorData) => {
+    const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+      .map((role) => String(role || '').toUpperCase());
+    const mergedQualifications = [
+      ...(doctorData?.qualifications || []),
+      ...(fallbackDoctorData?.qualifications || [])
+    ];
+    const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+
+    const isHealthOfficer =
+      roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (isHealthOfficer) return 'Health Officer (HO)';
+    if (roleCandidates.some((role) => role.includes('DERM')) || normalizedQualifications.some((q) => q.includes('DERM'))) {
+      return 'Dermato-venereologist';
+    }
+
+    return Array.from(new Set(mergedQualifications.filter(Boolean))).join(', ') || 'General Practitioner';
+  };
+
+  const getPrintableDoctorName = (doctorData, fallbackDoctorData) => {
+    const rawName = String(
+      doctorData?.fullname ||
+      doctorData?.fullName ||
+      doctorData?.name ||
+      fallbackDoctorData?.fullname ||
+      fallbackDoctorData?.username ||
+      ''
+    ).trim();
+
+    if (!rawName) return 'Attending Clinician';
+    if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
+
+    const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+      .map((role) => String(role || '').toUpperCase());
+    const mergedQualifications = [
+      ...(doctorData?.qualifications || []),
+      ...(fallbackDoctorData?.qualifications || [])
+    ];
+    const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+    const isHealthOfficer =
+      roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
   };
 
   const renderNoteField = (fieldKey, label, note) => {
@@ -246,8 +310,8 @@ const ComprehensivePatientHistory = () => {
       // Get doctor from first medication order (all should be from same doctor)
       const firstMed = medicationsToPrint[0];
       const prescribingDoctor = firstMed?.doctor || firstMed?.medicationOrder?.doctor || selectedVisit.doctor || currentUser;
-      const doctorName = prescribingDoctor?.fullname || currentUser?.fullname || 'Dr. Unknown';
-      const doctorQualification = prescribingDoctor?.qualifications?.join(', ') || currentUser?.qualifications?.join(', ') || 'General Practitioner';
+      const doctorName = getPrintableDoctorName(prescribingDoctor, currentUser);
+      const doctorQualification = getDoctorQualificationLabel(prescribingDoctor, currentUser);
       const doctorLicense = prescribingDoctor?.licenseNumber || currentUser?.licenseNumber || 'N/A';
 
       const currentDate = new Date().toLocaleDateString('en-US', {
@@ -448,8 +512,7 @@ const ComprehensivePatientHistory = () => {
         const cleanedName = formatMedicationName(med.name);
         const strength = med.strength && med.strength !== 'N/A' ? med.strength : '';
         const instructionLine = formatMedicationInstruction(med);
-        const medInstructions = med.instructions || med.additionalNotes || '';
-        const note = (medInstructions && medInstructions !== 'Custom medication - not in inventory') ? medInstructions : '';
+        const note = resolveMedicationInstruction(med);
 
         return `
                 <div class="medication-item">

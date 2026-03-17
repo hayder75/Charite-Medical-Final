@@ -9,6 +9,8 @@ import { useAuth } from '../../contexts/AuthContext';
 
 import { formatMedicationName, formatMedicationInstruction, formatEmergencyInstruction } from '../../utils/medicalStandards';
 
+const NON_CLINICAL_CUSTOM_NOTE = 'Custom medication - not in inventory';
+
 const BillingPatientHistory = () => {
   const { user: currentUser } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -118,6 +120,71 @@ const BillingPatientHistory = () => {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+  const resolveMedicationInstruction = (medication) => {
+    const candidates = [medication?.instructions, medication?.instructionText, medication?.additionalNotes];
+    const normalizedPlaceholder = NON_CLINICAL_CUSTOM_NOTE.toLowerCase();
+
+    for (const candidate of candidates) {
+      const text = String(candidate || '').trim();
+      if (!text) continue;
+      if (text.toLowerCase() === normalizedPlaceholder) continue;
+      return text;
+    }
+
+    return '';
+  };
+
+  const getDoctorQualificationLabel = (doctorData, fallbackDoctorData) => {
+    const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+      .map((role) => String(role || '').toUpperCase());
+    const mergedQualifications = [
+      ...(doctorData?.qualifications || []),
+      ...(fallbackDoctorData?.qualifications || [])
+    ];
+    const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+
+    const isHealthOfficer =
+      roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    if (isHealthOfficer) {
+      return 'Health Officer (HO)';
+    }
+
+    if (roleCandidates.some((role) => role.includes('DERM')) || normalizedQualifications.some((q) => q.includes('DERM'))) {
+      return 'Dermato-venereologist';
+    }
+
+    return Array.from(new Set(mergedQualifications.filter(Boolean))).join(', ') || 'General Practitioner';
+  };
+
+  const getPrintableDoctorName = (doctorData, fallbackDoctorData) => {
+    const rawName = String(
+      doctorData?.fullname ||
+      doctorData?.fullName ||
+      doctorData?.name ||
+      fallbackDoctorData?.fullname ||
+      fallbackDoctorData?.username ||
+      ''
+    ).trim();
+
+    if (!rawName) return 'Attending Clinician';
+    if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
+
+    const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+      .map((role) => String(role || '').toUpperCase());
+    const mergedQualifications = [
+      ...(doctorData?.qualifications || []),
+      ...(fallbackDoctorData?.qualifications || [])
+    ];
+    const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+    const isHealthOfficer =
+      roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+    return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
+  };
+
   // Print Medications - Matching MedicationOrdering.jsx style
   const handlePrintMedications = () => {
     // Check both medications and medicationOrders
@@ -134,6 +201,9 @@ const BillingPatientHistory = () => {
         name: med.medication?.name || med.medicationCatalog?.name || med.name,
         dosageForm: med.medication?.dosageForm || med.medicationCatalog?.dosageForm || med.dosageForm,
         strength: med.medication?.strength || med.medicationCatalog?.strength || med.strength,
+        instructions: med.instructions || med.instructionText || med.medicationOrder?.instructions || med.medicationOrder?.instructionText || med.medication?.instructions || med.medicationCatalog?.instructions || null,
+        instructionText: med.instructionText || med.instructions || med.medicationOrder?.instructionText || med.medicationOrder?.instructions || med.medication?.instructions || med.medicationCatalog?.instructions || null,
+        additionalNotes: med.additionalNotes || med.medicationOrder?.additionalNotes || null,
         doctor: med.doctor || med.medicationOrder?.doctor || null,
       }));
 
@@ -145,7 +215,8 @@ const BillingPatientHistory = () => {
           item.frequency === current.frequency &&
           item.frequencyPeriod === current.frequencyPeriod &&
           item.route === current.route &&
-          item.duration === current.duration
+          item.duration === current.duration &&
+          resolveMedicationInstruction(item) === resolveMedicationInstruction(current)
         );
         if (!isDuplicate) acc.push(current);
         return acc;
@@ -159,8 +230,8 @@ const BillingPatientHistory = () => {
       // Get doctor from first medication order (all should be from same doctor)
       const firstMed = medicationsToPrint[0];
       const prescribingDoctor = firstMed?.doctor || firstMed?.medicationOrder?.doctor || selectedVisit.doctor || currentUser;
-      const doctorName = prescribingDoctor?.fullname || currentUser?.fullname || 'Medical Practitioner';
-      const doctorQualification = prescribingDoctor?.qualifications?.join(', ') || currentUser?.qualifications?.join(', ') || 'Medical Doctor';
+      const doctorName = getPrintableDoctorName(prescribingDoctor, currentUser);
+      const doctorQualification = getDoctorQualificationLabel(prescribingDoctor, currentUser);
 
       const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -265,7 +336,7 @@ const BillingPatientHistory = () => {
         const displayName = String(med.name || '').trim() || 'Unknown Medication';
         const rawStrength = String(med.strength || '').trim();
         const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
-        const instructionText = med.instructions || med.instructionText || med.additionalNotes || '';
+        const instructionText = resolveMedicationInstruction(med);
 
         return `
                   <div class="medication-item">
@@ -290,6 +361,110 @@ const BillingPatientHistory = () => {
     } catch (error) {
       console.error('Print error:', error);
       toast.error('Failed to print prescription');
+    }
+  };
+
+  const handlePrintCompound = () => {
+    const compounds = selectedVisit?.compoundPrescriptions || [];
+    if (!selectedVisit || !patientHistory || compounds.length === 0) {
+      toast.error('No compound prescriptions to print');
+      return;
+    }
+
+    try {
+      const patient = patientHistory.patient;
+      const patientAge = patient?.dob ? calculateAge(patient.dob) : 'N/A';
+      const patientGender = (patient?.gender || 'N/A').charAt(0).toUpperCase();
+      const patientCardNumber = patient?.id || 'N/A';
+      const patientName = patient?.name || 'N/A';
+
+      const firstCompound = compounds[0];
+      const prescribingDoctor = firstCompound?.doctor || selectedVisit?.doctor || currentUser;
+      const doctorName = getPrintableDoctorName(prescribingDoctor, currentUser);
+      const doctorQualification = getDoctorQualificationLabel(prescribingDoctor, currentUser);
+
+      const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+      const printWindow = window.open('', '_blank');
+      const content = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Compound Prescription - ${patientName}</title>
+          <style>
+            @media print {
+              @page { size: A6; margin: 0 !important; }
+              html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
+              * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: black !important; }
+              .no-print { display: none !important; }
+              .prescription-container { width: 105mm !important; min-height: 148mm !important; margin: 0 auto !important; padding: 8mm !important; border: none !important; box-shadow: none !important; background: white !important; box-sizing: border-box !important; }
+            }
+            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; color: #333; line-height: 1.3; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+            .no-print { padding: 10px; background: #fff; margin-bottom: 20px; border-radius: 8px; width: 100%; max-width: 300px; text-align: center; }
+            .no-print button { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+            .prescription-container { width: 105mm; min-height: 148mm; background: white; padding: 8mm; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box; margin: 0 auto; }
+            .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #2563eb; }
+            .header-left { display: flex; align-items: center; gap: 8px; }
+            .logo { width: 40px; height: 40px; object-fit: contain; }
+            .clinic-name { font-size: 13px; font-weight: 700; margin: 0; color: #1e40af; text-transform: uppercase; }
+            .clinic-tagline { font-size: 9px; color: #64748b; margin: 0; font-style: italic; }
+            .report-title { font-size: 14px; font-weight: 700; color: #0f172a; text-transform: uppercase; }
+            .report-info { font-size: 9px; color: #64748b; margin-top: 1px; text-align: right; }
+            .patient-section { margin-bottom: 12px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 11px; }
+            .info-label { font-weight: 700; color: #64748b; }
+            .medication-item { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; width: 100%; }
+            .medication-name { font-weight: 700; font-size: 12px; color: #0f172a; margin-bottom: 2px; }
+            .medication-details { font-size: 11px; color: #334155; font-weight: 500; white-space: pre-wrap; }
+            .footer { margin-top: auto; padding-top: 10px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; }
+            .doctor-name { font-weight: 700; color: #1e293b; font-size: 11px; }
+            .signature-box { width: 100px; border-top: 1px solid #334155; padding-top: 4px; text-align: center; font-size: 8px; color: #64748b; }
+          </style>
+        </head>
+        <body>
+          <div class="no-print"><button onclick="window.print()">Print Prescription</button></div>
+          <div class="prescription-container">
+            <div class="header">
+              <div class="header-left">
+                <img src="/clinic-logo.jpg" alt="Clinic Logo" class="logo" onerror="this.style.display='none'">
+                <div class="clinic-info">
+                  <h1 class="clinic-name">Charite Medium Clinic</h1>
+                  <p class="clinic-tagline">Quality Healthcare You Can Trust</p>
+                </div>
+              </div>
+              <div class="header-right">
+                <h2 class="report-title">Compound Prescription</h2>
+                <div class="report-info">Date: ${currentDate}<br>Time: ${currentTime}</div>
+              </div>
+            </div>
+            <div class="patient-section">
+              <div><span class="info-label">Patient:</span> ${String(patientName || '').toUpperCase()}</div>
+              <div><span class="info-label">Card No:</span> #${patientCardNumber}</div>
+              <div><span class="info-label">Age/Sex:</span> ${patientAge}Y / ${patientGender}</div>
+              <div style="text-align: right;"><span class="info-label">Visit ID:</span> #${selectedVisit?.visitUid || selectedVisit?.id?.substring(0, 8)}</div>
+            </div>
+            <div class="medications-section">
+              <h3 style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 2px;">Compound Prescription</h3>
+              ${compounds.map((cp, idx) => {
+                const text = escapeHtml(cp.prescriptionText || cp.rawText || cp.instructions || '');
+                return `<div class="medication-item"><div class="medication-name"># ${idx + 1}</div><div class="medication-details">${text}</div></div>`;
+              }).join('')}
+            </div>
+            <div class="footer">
+              <div>Prescribed by: <span class="doctor-name">${doctorName}</span><br>${doctorQualification}</div>
+              <div class="signature-box">Doctor's Signature & Stamp</div>
+            </div>
+          </div>
+        </body>
+      </html>`;
+
+      printWindow.document.write(content);
+      printWindow.document.close();
+      setTimeout(() => { printWindow.print(); }, 800);
+      toast.success('Opening print preview...');
+    } catch (error) {
+      console.error('Print error:', error);
+      toast.error('Failed to print compound prescription');
     }
   };
 
@@ -1261,6 +1436,13 @@ const BillingPatientHistory = () => {
                       Emergency Meds
                     </button>
                     <button
+                      onClick={() => setActiveTab('compound')}
+                      className={`px-4 py-2 ${activeTab === 'compound' ? 'border-b-2 border-blue-600 text-blue-600' : ''}`}
+                    >
+                      <FileText className="inline h-4 w-4 mr-2" />
+                      Compound Rx
+                    </button>
+                    <button
                       onClick={() => setActiveTab('billings')}
                       className={`px-4 py-2 ${activeTab === 'billings' ? 'border-b-2 border-blue-600 text-blue-600' : ''}`}
                     >
@@ -1298,12 +1480,12 @@ const BillingPatientHistory = () => {
                                 </div>
                                 <div className="text-sm text-gray-700 bg-white p-2 border rounded border-gray-100 flex items-center gap-2">
                                   <span className="font-bold text-blue-600 uppercase text-[10px]">Sig:</span>
-                                  {instruction}
+                                  {resolveMedicationInstruction(med) || instruction}
                                 </div>
-                                {(med.instructionText || med.instructions) && (
+                                {resolveMedicationInstruction(med) && (
                                   <div className="text-[12px] text-gray-500 mt-2 flex items-start gap-1">
-                                    <span className="font-semibold text-gray-400">Notes:</span>
-                                    <span className="italic">{med.instructionText || med.instructions}</span>
+                                    <span className="font-semibold text-gray-400">Doctor Notes:</span>
+                                    <span className="italic">{resolveMedicationInstruction(med)}</span>
                                   </div>
                                 )}
                               </div>
@@ -1538,6 +1720,37 @@ const BillingPatientHistory = () => {
                                         </td>
                                       </tr>
                                     ))}
+
+                                    {activeTab === 'compound' && (
+                                      <div>
+                                        <div className="flex justify-between items-center mb-4">
+                                          <h3 className="text-lg font-semibold">Compound Prescriptions</h3>
+                                          {(selectedVisit.compoundPrescriptions?.length > 0) && (
+                                            <button
+                                              onClick={handlePrintCompound}
+                                              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                            >
+                                              <Printer className="h-4 w-4" />
+                                              Print
+                                            </button>
+                                          )}
+                                        </div>
+                                        {selectedVisit.compoundPrescriptions?.length > 0 ? (
+                                          <div className="space-y-3">
+                                            {selectedVisit.compoundPrescriptions.map((cp, idx) => (
+                                              <div key={cp.id || idx} className="p-4 border rounded-lg bg-gray-50">
+                                                <div className="font-semibold text-blue-900">#{idx + 1} {cp.referenceNumber ? `(${cp.referenceNumber})` : ''}</div>
+                                                <div className="text-sm text-gray-700 mt-2 whitespace-pre-wrap font-mono">
+                                                  {cp.prescriptionText || cp.rawText || cp.instructions || 'No details'}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <p className="text-gray-500">No compound prescriptions for this visit</p>
+                                        )}
+                                      </div>
+                                    )}
                                   </tbody>
                                   <tfoot className="bg-gray-50">
                                     <tr>

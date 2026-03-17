@@ -3,6 +3,57 @@ import { Plus, Trash2, Printer, Save, Beaker, AlertCircle, Bold, Italic, Underli
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 
+const getDoctorQualificationLabel = (doctorData, fallbackDoctorData) => {
+  const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+    .map((role) => String(role || '').toUpperCase());
+  const mergedQualifications = [
+    ...(doctorData?.qualifications || []),
+    ...(fallbackDoctorData?.qualifications || [])
+  ];
+  const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+
+  const isHealthOfficer =
+    roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+    normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+  if (isHealthOfficer) {
+    return 'Health Officer (HO)';
+  }
+
+  if (roleCandidates.some((role) => role.includes('DERM')) || normalizedQualifications.some((q) => q.includes('DERM'))) {
+    return 'Dermato-venereologist';
+  }
+
+  return Array.from(new Set(mergedQualifications.filter(Boolean))).join(', ') || 'General Practitioner';
+};
+
+const getPrintableDoctorName = (doctorData, fallbackDoctorData) => {
+  const rawName = String(
+    doctorData?.fullname ||
+    doctorData?.fullName ||
+    doctorData?.name ||
+    fallbackDoctorData?.fullname ||
+    fallbackDoctorData?.username ||
+    ''
+  ).trim();
+
+  if (!rawName) return 'Attending Clinician';
+  if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
+
+  const roleCandidates = [doctorData?.role, fallbackDoctorData?.role]
+    .map((role) => String(role || '').toUpperCase());
+  const mergedQualifications = [
+    ...(doctorData?.qualifications || []),
+    ...(fallbackDoctorData?.qualifications || [])
+  ];
+  const normalizedQualifications = mergedQualifications.map((q) => String(q || '').toUpperCase());
+  const isHealthOfficer =
+    roleCandidates.some((role) => role.includes('HEALTH_OFFICER') || role === 'HO') ||
+    normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+  return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
+};
+
 const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -144,20 +195,6 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
     return normalized ? normalized.toUpperCase() : 'N/A';
   };
 
-  const getDoctorQualificationLabel = (doctorData) => {
-    const role = String(doctorData?.role || '').toUpperCase();
-    const qualifications = Array.isArray(doctorData?.qualifications)
-      ? doctorData.qualifications
-      : [];
-    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
-
-    if (role.includes('DERM') || normalizedQualifications.some((q) => q.includes('DERM'))) {
-      return 'Dermato-venereologist';
-    }
-
-    return qualifications.join(', ') || 'General Practitioner';
-  };
-
   const printAllPrescriptions = async () => {
     if (existingPrescriptions.length === 0) return;
 
@@ -172,8 +209,8 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       const patientAge = patientData?.dob ? Math.floor((new Date() - new Date(patientData.dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 'N/A';
       const fallbackDoctor = existingPrescriptions.find((p) => p?.doctor?.fullname)?.doctor;
       doctorData = doctorData || fallbackDoctor;
-      const doctorName = doctorData?.fullname || 'Dr. Unknown';
-      const doctorQualification = getDoctorQualificationLabel(doctorData);
+      const doctorName = getPrintableDoctorName(doctorData, visit?.doctor);
+      const doctorQualification = getDoctorQualificationLabel(doctorData, visit?.doctor);
 
       const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -269,7 +306,7 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
 
               <div class="footer">
                 <div>
-                  <div class="doctor-name">${doctorName}</div>
+                  Prescribed by: <span class="doctor-name">${doctorName}</span>
                   <div style="font-size: 9px; color: #64748b;">${doctorQualification}</div>
                 </div>
                 <div class="signature-box">Doctor's Signature</div>
@@ -303,8 +340,8 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
       const patientCardNumber = patientData?.id || 'N/A';
       const patientGender = (patientData?.gender?.charAt(0) || 'N/A').toUpperCase();
       const patientAge = patientData?.dob ? Math.floor((new Date() - new Date(patientData.dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 'N/A';
-      const doctorName = doctorData?.fullname || prescription.doctor?.fullname || 'Dr. Unknown';
-      const doctorQualification = getDoctorQualificationLabel(doctorData || prescription.doctor);
+      const doctorName = getPrintableDoctorName(doctorData, prescription.doctor || visit?.doctor);
+      const doctorQualification = getDoctorQualificationLabel(doctorData, prescription.doctor || visit?.doctor);
 
       const currentDate = new Date(prescription.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const currentTime = new Date(prescription.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -351,7 +388,6 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
               .footer { margin-top: auto; padding-top: 10px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; }
               .doctor-name { font-weight: 700; color: #1e293b; font-size: 11px; }
               .signature-box { width: 100px; border-top: 1px solid #334155; padding-top: 4px; text-align: center; font-size: 8px; color: #64748b; }
-              .external-warning { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 6px 10px; border-radius: 4px; font-size: 10px; font-weight: bold; text-align: center; margin-bottom: 10px; }
             </style>
           </head>
           <body>
@@ -379,10 +415,6 @@ const CompoundPrescriptionBuilder = ({ visit, onSaved, onClose }) => {
                 <div><span class="info-label">Card No:</span> #${patientCardNumber}</div>
                 <div><span class="info-label">Age/Sex:</span> ${patientAge}Y / ${patientGender}</div>
                 <div style="text-align: right;"><span class="info-label">Rx No:</span> ${prescription.referenceNumber}</div>
-              </div>
-
-              <div class="external-warning">
-                ⚠ FOR EXTERNAL USE ONLY
               </div>
 
               <div class="medications-section">
@@ -488,7 +520,7 @@ Store at room temperature
 Ingredients: Mometasone furoate 0.1%
 Base: Petrolatum
 Directions: Apply once daily at night
-For external use only`}
+Keep container tightly closed`}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
               rows={15}
             />

@@ -97,6 +97,22 @@ const DURATION_UNITS = {
   MONTHS: 'Months'
 };
 
+const NON_CLINICAL_CUSTOM_NOTE = 'Custom medication - not in inventory';
+
+const resolveMedicationInstruction = (medication) => {
+  const candidates = [medication?.instructions, medication?.instructionText, medication?.additionalNotes];
+  const normalizedPlaceholder = NON_CLINICAL_CUSTOM_NOTE.toLowerCase();
+
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim();
+    if (!text) continue;
+    if (text.toLowerCase() === normalizedPlaceholder) continue;
+    return text;
+  }
+
+  return '';
+};
+
 const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlaced, existingOrders = [] }) => {
   const { user: currentUser } = useAuth();
   const [medicationSearch, setMedicationSearch] = useState('');
@@ -460,7 +476,8 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
         strength: med.strength || 'N/A',
         strengthText: med.strengthText || null,
         instructionText: med.instructions || med.instructionText || null,
-        additionalNotes: med.isCustom ? 'Custom medication - not in inventory' : '',
+        instructions: med.instructions || med.instructionText || null,
+        additionalNotes: null,
         category: med.category || null
       }));
 
@@ -676,7 +693,7 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               const displayName = String(med.name || '').trim() || 'Unknown Medication';
               const rawStrength = String(med.strength || '').trim();
               const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
-        const instructionText = med.instructions || med.instructionText || '';
+        const instructionText = resolveMedicationInstruction(med);
 
         return `
                 <div class="medication-item">
@@ -966,9 +983,9 @@ const MedicationOrdering = ({ visitId, patientId, patient, doctor, onOrdersPlace
               <div key={idx} className="p-3 bg-gray-50 border rounded-lg flex justify-between items-center">
                 <div className="flex-1">
                   <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.name)}</p>
-                  {(order.instructions || order.instructionText) && (
+                  {resolveMedicationInstruction(order) && (
                     <p className="text-xs text-gray-600 ml-4 italic">
-                      {order.instructions || order.instructionText}
+                      {resolveMedicationInstruction(order)}
                     </p>
                   )}
                 </div>
