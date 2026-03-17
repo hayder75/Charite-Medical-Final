@@ -912,6 +912,42 @@ const PatientConsultationPage = () => {
     }
   };
 
+  const handleDeleteLabBatchOrder = async (batchOrderId) => {
+    if (!window.confirm('Delete this lab order?')) return;
+    try {
+      await api.delete(`/doctors/lab-batch-order/${batchOrderId}`);
+      toast.success('Lab order deleted');
+      await fetchVisitData();
+    } catch (error) {
+      console.error('Error deleting lab order:', error);
+      toast.error(error.response?.data?.error || 'Failed to delete lab order');
+    }
+  };
+
+  const handleDeleteLabTestOrder = async (orderId) => {
+    if (!window.confirm('Delete this lab test order?')) return;
+    try {
+      await api.delete(`/doctors/lab-test-order/${orderId}`);
+      toast.success('Lab test order deleted');
+      await fetchVisitData();
+    } catch (error) {
+      console.error('Error deleting lab test order:', error);
+      toast.error(error.response?.data?.error || 'Failed to delete lab test order');
+    }
+  };
+
+  const handleDeleteRadiologyBatchOrder = async (batchOrderId) => {
+    if (!window.confirm('Delete this radiology order?')) return;
+    try {
+      await api.delete(`/doctors/radiology-batch-order/${batchOrderId}`);
+      toast.success('Radiology order deleted');
+      await fetchVisitData();
+    } catch (error) {
+      console.error('Error deleting radiology order:', error);
+      toast.error(error.response?.data?.error || 'Failed to delete radiology order');
+    }
+  };
+
   const getPrintableDoctorData = (historyVisit) => {
     return historyVisit?.doctor || visit?.doctor || currentUser || {};
   };
@@ -1090,6 +1126,10 @@ const PatientConsultationPage = () => {
     const printWindow = window.open('', '_blank');
     const patient = visit?.patient || {};
     const currentDate = new Date().toLocaleDateString();
+    const patientAge = patient?.age || (patient?.dob ? calculateAge(patient.dob) : 'N/A');
+    const orderingDoctor = getPrintableDoctorName(
+      batchOrder?.doctor || batchOrder?.orderedBy || getPrintableDoctorData()
+    );
 
     // Get results if available
     const hasResults = (batchOrder.detailedResults && batchOrder.detailedResults.length > 0) ||
@@ -1114,9 +1154,6 @@ const PatientConsultationPage = () => {
             .results-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
             .results-table th, .results-table td { border: 1px solid #ddd; padding: 6px; text-align: left; }
             .results-table th { background: #f1f5f9; }
-            .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
-            .status-completed { background: #dcfce7; color: #166534; }
-            .status-pending { background: #fef3c7; color: #92400e; }
             .no-print { text-align: center; margin-top: 20px; }
             .no-print button { padding: 8px 20px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
             @media print { .no-print { display: none; } }
@@ -1133,8 +1170,9 @@ const PatientConsultationPage = () => {
             <div class="info-grid">
               <div><span class="info-label">Name:</span> ${patient.name || 'N/A'}</div>
               <div><span class="info-label">ID:</span> ${patient.id || 'N/A'}</div>
-              <div><span class="info-label">Age:</span> ${patient.age || 'N/A'}</div>
+              <div><span class="info-label">Age:</span> ${patientAge}</div>
               <div><span class="info-label">Gender:</span> ${patient.gender || 'N/A'}</div>
+              <div><span class="info-label">Ordered By:</span> ${orderingDoctor}</div>
               <div><span class="info-label">Phone:</span> ${patient.mobile || 'N/A'}</div>
               <div><span class="info-label">Date:</span> ${currentDate}</div>
             </div>
@@ -1144,12 +1182,11 @@ const PatientConsultationPage = () => {
             <div class="section-title">Order Details</div>
             <div class="info-grid">
               <div><span class="info-label">Order ID:</span> #${batchOrder.id}</div>
-              <div><span class="info-label">Status:</span> <span class="status ${hasResults ? 'status-completed' : 'status-pending'}">${hasResults ? 'COMPLETED' : batchOrder.status}</span></div>
             </div>
           </div>
 
           <div class="section">
-            <div class="section-title">Tests Ordered</div>
+            <div class="section-title">Laboratory Test Orders</div>
             <ul class="test-list">
               ${batchOrder.services?.map(service => `<li class="test-item">${service.investigationType?.name || service.service?.name || 'Lab Test'}</li>`).join('') || '<li>No tests ordered</li>'}
             </ul>
@@ -1200,6 +1237,10 @@ const PatientConsultationPage = () => {
     const printWindow = window.open('', '_blank');
     const patient = visit?.patient || {};
     const currentDate = new Date().toLocaleDateString();
+    const patientAge = patient?.age || (patient?.dob ? calculateAge(patient.dob) : 'N/A');
+    const orderingDoctor = getPrintableDoctorName(
+      batchOrder?.doctor || batchOrder?.orderedBy || getPrintableDoctorData()
+    );
 
     const hasResults = batchOrder.radiologyResults && batchOrder.radiologyResults.length > 0;
 
@@ -1220,9 +1261,6 @@ const PatientConsultationPage = () => {
             .test-list { list-style: none; padding: 0; margin: 0; }
             .test-item { padding: 8px; margin: 4px 0; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #2563eb; }
             .results-box { padding: 15px; background: #f8f9fa; border-radius: 4px; margin-top: 10px; }
-            .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
-            .status-completed { background: #dcfce7; color: #166534; }
-            .status-pending { background: #fef3c7; color: #92400e; }
             .no-print { text-align: center; margin-top: 20px; }
             .no-print button { padding: 8px 20px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
             @media print { .no-print { display: none; } }
@@ -1239,8 +1277,9 @@ const PatientConsultationPage = () => {
             <div class="info-grid">
               <div><span class="info-label">Name:</span> ${patient.name || 'N/A'}</div>
               <div><span class="info-label">ID:</span> ${patient.id || 'N/A'}</div>
-              <div><span class="info-label">Age:</span> ${patient.age || 'N/A'}</div>
+              <div><span class="info-label">Age:</span> ${patientAge}</div>
               <div><span class="info-label">Gender:</span> ${patient.gender || 'N/A'}</div>
+              <div><span class="info-label">Ordered By:</span> ${orderingDoctor}</div>
               <div><span class="info-label">Phone:</span> ${patient.mobile || 'N/A'}</div>
               <div><span class="info-label">Date:</span> ${currentDate}</div>
             </div>
@@ -1250,7 +1289,6 @@ const PatientConsultationPage = () => {
             <div class="section-title">Order Details</div>
             <div class="info-grid">
               <div><span class="info-label">Order ID:</span> #${batchOrder.id}</div>
-              <div><span class="info-label">Status:</span> <span class="status ${hasResults ? 'status-completed' : 'status-pending'}">${hasResults ? 'COMPLETED' : batchOrder.status}</span></div>
             </div>
           </div>
 
@@ -3483,6 +3521,14 @@ const PatientConsultationPage = () => {
                                   <Printer className="h-4 w-4" />
                                   Print
                                 </button>
+                                <button
+                                  onClick={() => handleDeleteLabBatchOrder(batchOrder.id)}
+                                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded transition-colors"
+                                  title="Delete Lab Order"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete
+                                </button>
                                 <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
                                   {batchOrder.status}
                                 </span>
@@ -3547,6 +3593,14 @@ const PatientConsultationPage = () => {
                                 >
                                   <Printer className="h-4 w-4" />
                                   Print
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteLabTestOrder(order.id)}
+                                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded transition-colors"
+                                  title="Delete Lab Test Order"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete
                                 </button>
                                 <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
                                   {order.status}
@@ -3660,10 +3714,17 @@ const PatientConsultationPage = () => {
                                     </p>
                                   </div>
                                   <button
-                                    onClick={() => {/* Add print logic if needed */ }}
+                                    onClick={() => printRadiologyOrders(batchOrder)}
                                     className="p-2 bg-white text-yellow-700 rounded-full border border-yellow-200 hover:bg-yellow-100"
                                   >
                                     <Printer className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteRadiologyBatchOrder(batchOrder.id)}
+                                    className="p-2 bg-white text-red-700 rounded-full border border-red-200 hover:bg-red-100"
+                                    title="Delete Radiology Order"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
                                   </button>
                                 </div>
                               </div>
