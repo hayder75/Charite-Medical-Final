@@ -226,8 +226,5 @@ router.post('/direct-complete', doctorController.directCompleteVisit);
 
 router.patch('/medication-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.updateMedicationOrder);
 router.delete('/medication-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.deleteMedicationOrder);
-router.delete('/lab-batch-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.deleteLabBatchOrder);
-router.delete('/lab-test-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.deleteLabTestOrder);
-router.delete('/radiology-batch-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.deleteRadiologyBatchOrder);
 
 module.exports = router;
