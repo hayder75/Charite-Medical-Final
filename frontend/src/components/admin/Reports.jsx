@@ -4,6 +4,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
+import { getServerUrl } from '../../utils/imageUrl';
 
 const Reports = () => {
   const navigate = useNavigate();
@@ -532,7 +533,7 @@ const Reports = () => {
       });
 
       const link = document.createElement('a');
-      link.href = `${window.location.protocol}//${window.location.hostname}:3000${response.data.filePath}`;
+      link.href = `${getServerUrl()}${response.data.filePath}`;
       link.download = response.data.fileName;
       document.body.appendChild(link);
       link.click();
@@ -557,7 +558,7 @@ const Reports = () => {
       });
 
       const link = document.createElement('a');
-      link.href = `${window.location.protocol}//${window.location.hostname}:3000${response.data.filePath}`;
+      link.href = `${getServerUrl()}${response.data.filePath}`;
       link.download = response.data.fileName;
       document.body.appendChild(link);
       link.click();

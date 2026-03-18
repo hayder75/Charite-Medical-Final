@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
+import { getServerUrl } from '../../utils/imageUrl';
 
 const InsuranceDetail = () => {
   const { insuranceId } = useParams();
@@ -149,7 +150,7 @@ const InsuranceDetail = () => {
         });
         
         const link = document.createElement('a');
-        link.href = `${window.location.protocol}//${window.location.hostname}:3000${pdfResponse.data.filePath}`;
+        link.href = `${getServerUrl()}${pdfResponse.data.filePath}`;
         link.download = pdfResponse.data.fileName;
         document.body.appendChild(link);
         link.click();

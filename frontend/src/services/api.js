@@ -4,6 +4,11 @@ import axios from 'axios';
 // In development (localhost), use full URL to backend
 // In production (behind Nginx), use relative URL
 function getApiBaseUrl() {
+  // Highest priority: explicit environment override from build/runtime config.
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+
   // Development: If running on port 3001 (Vite default), connect to backend on port 3000
   // This works for both localhost and LAN IP access
   if (window.location.port === '3001') {
