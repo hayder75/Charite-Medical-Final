@@ -589,12 +589,13 @@ const BillingPatientHistory = () => {
         const displayName = String(med.serviceName || med.name || '').trim() || 'Unknown Medication';
         const rawStrength = String(med.strength || '').trim();
         const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
-        const instructionText = med.instructions || med.instructionText || med.notes || '';
+        const emergencyText = formatEmergencyInstruction(med);
 
         return `
                   <div class="medication-item">
-                    <div class="medication-name"># ${index + 1}. ${displayName}${strengthSuffix}</div>
-                    ${instructionText ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${instructionText}</div>` : ''}
+                    <div class="medication-name"># ${index + 1}. ${escapeHtml(displayName + strengthSuffix)}</div>
+                    ${emergencyText.instruction ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${escapeHtml(emergencyText.instruction)}</div>` : ''}
+                    ${emergencyText.special ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px; font-style: italic;">${escapeHtml(emergencyText.special)}</div>` : ''}
                   </div>
                 `;
       }).join('')}

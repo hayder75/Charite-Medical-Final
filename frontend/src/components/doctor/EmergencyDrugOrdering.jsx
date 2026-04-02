@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Trash2, Printer, Pill, CheckCircle, X, Save } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { formatMedicationName } from '../../utils/medicalStandards';
+import { formatEmergencyInstruction, formatMedicationName } from '../../utils/medicalStandards';
 import { useAuth } from '../../contexts/AuthContext';
 
 const DEFAULT_MEDICATION = {
@@ -21,6 +21,13 @@ const DEFAULT_MEDICATION = {
   route: '',
   isCustom: false
 };
+
+const escapeHtml = (value = '') => String(value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
   const { user: currentUser } = useAuth();
@@ -321,14 +328,26 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
   const printPrescription = async () => {
     const medicationsToPrint = existingOrders.length > 0
       ? existingOrders.map((order) => ({
-          name: order.service?.name || 'Unknown Medication',
+          name: order.service?.name || order.customName || 'Unknown Medication',
           instructions: order.instructions || '',
-          strength: order.strength || ''
+          strength: order.strength || '',
+          dosage: order.dosage || '',
+          frequency: order.frequency || '',
+          frequencyPeriod: order.frequencyPeriod || '',
+          duration: order.duration || '',
+          durationPeriod: order.durationPeriod || '',
+          route: order.route || ''
         }))
       : selectedMedications.map((med) => ({
           name: med.name,
           instructions: med.instructions || '',
-          strength: med.strength || ''
+          strength: med.strength || '',
+          dosage: med.dosage || '',
+          frequency: med.frequency || '',
+          frequencyPeriod: med.frequencyPeriod || '',
+          duration: med.duration || '',
+          durationPeriod: med.durationPeriod || '',
+          route: med.route || ''
         }));
 
     if (medicationsToPrint.length === 0) {
@@ -419,10 +438,12 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                 const displayName = String(med.name || '').trim() || 'Unknown Medication';
                 const rawStrength = String(med.strength || '').trim();
                 const strengthSuffix = rawStrength && !displayName.toLowerCase().includes(rawStrength.toLowerCase()) ? ` ${rawStrength}` : '';
+                const emergencyText = formatEmergencyInstruction(med);
                 return `
                 <div class="medication-item">
-                  <div class="medication-name"># ${idx + 1}. ${displayName}${strengthSuffix}</div>
-                  ${med.instructions ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${med.instructions}</div>` : ''}
+                  <div class="medication-name"># ${idx + 1}. ${escapeHtml(displayName + strengthSuffix)}</div>
+                  ${emergencyText.instruction ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px;">${escapeHtml(emergencyText.instruction)}</div>` : ''}
+                  ${emergencyText.special ? `<div class="medication-details" style="padding-left: 25px; margin-top: 4px; font-style: italic;">${escapeHtml(emergencyText.special)}</div>` : ''}
                 </div>
               `;
               }).join('')}
@@ -754,12 +775,17 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
             </button>
           </div>
           <div className="space-y-3">
-            {existingOrders.map((order, idx) => (
+            {existingOrders.map((order, idx) => {
+              const emergencyText = formatEmergencyInstruction(order);
+              return (
               <div key={order.id} className="p-3 bg-gray-50 border rounded-lg flex justify-between items-center">
                 <div className="flex-1">
-                  <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.service?.name || 'Unknown Medication')}</p>
-                  {order.instructions && (
-                    <p className="text-xs text-gray-600 ml-4 italic">{order.instructions}</p>
+                  <p className="font-medium text-gray-900">{idx + 1}. {formatMedicationName(order.service?.name || order.customName || 'Unknown Medication')}</p>
+                  {emergencyText.instruction && (
+                    <p className="text-xs text-blue-700 ml-4">{emergencyText.instruction}</p>
+                  )}
+                  {emergencyText.special && (
+                    <p className="text-xs text-gray-600 ml-4 italic">{emergencyText.special}</p>
                   )}
                   <p className="text-[11px] text-gray-500 ml-4">Qty: {order.quantity} {order.service?.price ? `| ${(Number(order.service.price) * Number(order.quantity || 1)).toFixed(2)} ETB` : ''}</p>
                 </div>
@@ -792,7 +818,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                   )}
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         </div>
       )}

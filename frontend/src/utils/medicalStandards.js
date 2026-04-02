@@ -628,36 +628,71 @@ export const formatMedicationInstruction = (med) => {
 export const formatEmergencyInstruction = (med) => {
   if (!med) return { instruction: '', dispense: '', special: '' };
 
-  const amount = (med.frequency || '').trim(); // For emergency, frequency is the amount
-  const form = (med.dosageForm || '').toUpperCase();
-  const route = (med.route || '').toUpperCase();
-  const freqCode = (med.frequencyPeriod || '').toUpperCase();
+  const dosage = String(med.dosage || '').trim();
+  const frequency = String(med.frequency || '').trim();
+  const route = String(med.route || '').trim();
+  const freqCode = String(med.frequencyPeriod || '').trim().toUpperCase();
   const durationRaw = String(med.duration || '').trim();
   const durationPeriod = String(med.durationPeriod || '').trim();
-  const quantity = med.quantity ? String(med.quantity).trim() : '';
   const instructions = med.instructions ? String(med.instructions).trim() : '';
 
-  const formAbbr = MED_FORM_MAP[form] || form.toLowerCase() || '';
-  const routeAbbr = MED_ROUTE_MAP[route] || route.toLowerCase() || '';
-  const freqWords = MED_FREQUENCY_MAP[freqCode] || freqCode.toLowerCase() || '';
+  const structuredParts = [];
 
-  let durationStr = '';
-  if (durationRaw) {
-    if (/^\d+$/.test(durationRaw)) {
-      durationStr = `${durationRaw} days`;
-    } else {
-      durationStr = durationRaw;
-      if (durationPeriod && !durationStr.toLowerCase().includes(durationPeriod.toLowerCase())) {
-        durationStr += ` ${durationPeriod}`;
-      }
-    }
+  if (dosage) {
+    structuredParts.push(`Dosage: ${dosage}`);
   }
 
-  const mainLine = `${amount} ${formAbbr} ${routeAbbr} ${freqWords}${durationStr ? ` for ${durationStr}` : ''}`.replace(/\s+/g, ' ').trim();
+  const freqWords = MED_FREQUENCY_MAP[freqCode] || freqCode.toLowerCase() || '';
+  let frequencyText = frequency;
+  if (freqWords) {
+    if (frequencyText) {
+      const lowerFrequency = frequencyText.toLowerCase();
+      const lowerFreqWords = freqWords.toLowerCase();
+      const lowerFreqCode = freqCode.toLowerCase();
+      if (!lowerFrequency.includes(lowerFreqWords) && !lowerFrequency.includes(lowerFreqCode)) {
+        frequencyText = `${frequencyText} ${freqWords}`.trim();
+      }
+    } else {
+      frequencyText = freqWords;
+    }
+  }
+  if (frequencyText) {
+    structuredParts.push(`Frequency: ${frequencyText}`);
+  }
+
+  let durationText = durationRaw;
+  if (durationText && durationPeriod && !durationText.toLowerCase().includes(durationPeriod.toLowerCase())) {
+    durationText += ` ${durationPeriod}`;
+  }
+  if (durationText) {
+    structuredParts.push(`Duration: ${durationText}`);
+  }
+
+  if (route) {
+    structuredParts.push(`Route: ${route.toUpperCase()}`);
+  }
+
+  const mainLine = structuredParts.join(' • ');
+
+  if (mainLine && instructions) {
+    return {
+      instruction: mainLine,
+      dispense: '',
+      special: `Instructions: ${instructions}`
+    };
+  }
+
+  if (mainLine) {
+    return {
+      instruction: mainLine,
+      dispense: '',
+      special: ''
+    };
+  }
 
   return {
-    instruction: mainLine,
+    instruction: instructions,
     dispense: '',
-    special: instructions ? `Special: ${instructions}` : ''
+    special: ''
   };
 };
