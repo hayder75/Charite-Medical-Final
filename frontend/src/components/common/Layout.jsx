@@ -12,6 +12,7 @@ import {
   LogOut,
   Bell,
   Settings,
+  RefreshCw,
   Home,
   Users,
   Stethoscope,
@@ -45,6 +46,9 @@ const Layout = ({ children, title, subtitle }) => {
   const [showSystemSettings, setShowSystemSettings] = useState(false);
   const [oldPatientModeEnabled, setOldPatientModeEnabled] = useState(false);
   const [togglingOldPatientMode, setTogglingOldPatientMode] = useState(false);
+  const [pendingAdvanceRequestCount, setPendingAdvanceRequestCount] = useState(0);
+  const [pageRefreshKey, setPageRefreshKey] = useState(0);
+  const [isRefreshingPage, setIsRefreshingPage] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -66,6 +70,18 @@ const Layout = ({ children, title, subtitle }) => {
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const handlePageRefresh = () => {
+    setIsRefreshingPage(true);
+    window.dispatchEvent(new CustomEvent('app-soft-refresh', {
+      detail: {
+        path: location.pathname,
+        triggeredAt: Date.now()
+      }
+    }));
+    setPageRefreshKey((prev) => prev + 1);
+    window.setTimeout(() => setIsRefreshingPage(false), 700);
   };
 
   const handleNavigation = (href) => {
@@ -95,6 +111,51 @@ const Layout = ({ children, title, subtitle }) => {
 
     fetchOldPatientMode();
   }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'BILLING_OFFICER') {
+      setPendingAdvanceRequestCount(0);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchPendingAdvanceRequests = async () => {
+      try {
+        const response = await api.get('/accounts/requests?status=PENDING');
+        const pendingCount = (response.data?.requests || []).filter(
+          (request) => request.requestType === 'ADD_DEPOSIT'
+        ).length;
+
+        if (isMounted) {
+          setPendingAdvanceRequestCount(pendingCount);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setPendingAdvanceRequestCount(0);
+        }
+      }
+    };
+
+    const handleAdvanceRequestUpdate = (event) => {
+      if (typeof event?.detail?.count === 'number') {
+        setPendingAdvanceRequestCount(event.detail.count);
+        return;
+      }
+
+      fetchPendingAdvanceRequests();
+    };
+
+    fetchPendingAdvanceRequests();
+    window.addEventListener('advance-requests-updated', handleAdvanceRequestUpdate);
+    const intervalId = window.setInterval(fetchPendingAdvanceRequests, 30000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('advance-requests-updated', handleAdvanceRequestUpdate);
+      window.clearInterval(intervalId);
+    };
+  }, [user?.role, location.pathname]);
 
   const toggleOldPatientMode = async () => {
     if (togglingOldPatientMode) return;
@@ -195,10 +256,11 @@ const Layout = ({ children, title, subtitle }) => {
             name: 'Billing & Finance',
             icon: CreditCard,
             group: 'billing_finance',
+            badgeCount: pendingAdvanceRequestCount,
             children: [
               { name: 'Billing Queue', href: '/billing/queue', icon: CreditCard },
               { name: 'Emergency Billing', href: '/emergency-billing', icon: Activity },
-              { name: 'Advance Deposits', href: '/billing/advance-deposits', icon: DollarSign },
+              { name: 'Advance Deposits', href: '/billing/advance-deposits', icon: DollarSign, badgeCount: pendingAdvanceRequestCount },
               { name: 'Patient Accounts', href: '/billing/patient-accounts', icon: CreditCard },
               { name: 'Credit Installments', href: '/billing/credit-accounts', icon: CreditCard },
               { name: 'Cash Management', href: '/cash-management', icon: BarChart3 },
@@ -305,13 +367,20 @@ const Layout = ({ children, title, subtitle }) => {
                       <item.icon className="mr-3 h-5 w-5 flex-shrink-0" />
                       {item.name}
                     </div>
-                    <svg
-                      className={`ml-2 h-4 w-4 transform transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
+                    <div className="flex items-center gap-2">
+                      {Number(item.badgeCount || 0) > 0 && (
+                        <span className="inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full bg-red-500 text-white text-[11px] font-bold">
+                          {item.badgeCount > 99 ? '99+' : item.badgeCount}
+                        </span>
+                      )}
+                      <svg
+                        className={`ml-2 h-4 w-4 transform transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
                   </button>
 
                   {/* Dropdown Content */}
@@ -321,14 +390,21 @@ const Layout = ({ children, title, subtitle }) => {
                         <button
                           key={child.name}
                           onClick={() => handleNavigation(child.href)}
-                          className={`group flex items-center px-3 py-2 text-sm font-medium rounded-lg w-full text-left transition-all duration-200 ${isCurrentPage(child.href)
+                          className={`group flex items-center justify-between px-3 py-2 text-sm font-medium rounded-lg w-full text-left transition-all duration-200 ${isCurrentPage(child.href)
                             ? 'text-white bg-white bg-opacity-20'
                             : 'text-gray-300 hover:text-white hover:bg-opacity-10'
                             }`}
                         >
-                          <child.icon className={`mr-3 h-4 w-4 transition-colors ${isCurrentPage(child.href) ? 'text-white' : 'text-gray-400 group-hover:text-white'
-                            }`} />
-                          {child.name}
+                          <div className="flex items-center">
+                            <child.icon className={`mr-3 h-4 w-4 transition-colors ${isCurrentPage(child.href) ? 'text-white' : 'text-gray-400 group-hover:text-white'
+                              }`} />
+                            {child.name}
+                          </div>
+                          {Number(child.badgeCount || 0) > 0 && (
+                            <span className="inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full bg-red-500 text-white text-[11px] font-bold">
+                              {child.badgeCount > 99 ? '99+' : child.badgeCount}
+                            </span>
+                          )}
                         </button>
                       ))}
                     </div>
@@ -385,6 +461,19 @@ const Layout = ({ children, title, subtitle }) => {
             </div>
 
             <div className="flex items-center space-x-4">
+              <button
+                onClick={handlePageRefresh}
+                disabled={isRefreshingPage}
+                className={`px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${isRefreshingPage ? 'opacity-70 cursor-not-allowed' : ''}`}
+                style={{ color: 'var(--dark)' }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--primary)'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                title="Refresh current page data"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshingPage ? 'animate-spin' : ''}`} />
+                <span className="hidden md:inline text-sm font-medium">Refresh</span>
+              </button>
+
               {user?.role === 'ADMIN' && (
                 <>
                   <button
@@ -442,7 +531,7 @@ const Layout = ({ children, title, subtitle }) => {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto" style={{ backgroundColor: '#FFFFFF' }}>
+        <main key={`${location.pathname}-${pageRefreshKey}`} className="flex-1 overflow-y-auto" style={{ backgroundColor: '#FFFFFF' }}>
           <div className="py-6">
             <div className={(location.pathname.startsWith('/admin') || location.pathname.includes('/doctor/consultation')) ? 'px-4 sm:px-6 lg:px-8' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8'}>
               {children}

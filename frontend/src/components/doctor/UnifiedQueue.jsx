@@ -60,19 +60,6 @@ const UnifiedQueue = () => {
   }, [queueFilter, completedDate]);
 
   useEffect(() => {
-    if (!workspaceConfig.completedVisitsEnabled) {
-      resetCompletedStats();
-      return;
-    }
-
-    if (queueFilter === 'completed') {
-      return;
-    }
-
-    fetchCompletedSummary();
-  }, [completedDate, queueFilter, workspaceConfig.completedVisitsEnabled]);
-
-  useEffect(() => {
     if (searchQuery.trim().length > 0 && queueFilter !== 'completed') {
       const timer = setTimeout(() => {
         fetchGlobalSearch();
@@ -175,10 +162,6 @@ const UnifiedQueue = () => {
     }
   };
 
-  const fetchCompletedSummary = async () => {
-    await fetchCompletedData({ includeQueue: false, showLoading: false, showErrors: false });
-  };
-
   const fetchCompletedData = async ({ includeQueue, showLoading, showErrors }) => {
     try {
       if (showLoading) {
@@ -203,6 +186,12 @@ const UnifiedQueue = () => {
       }
 
       resetCompletedStats();
+
+      const statusCode = error.response?.status;
+      if (!showErrors && (statusCode === 403 || statusCode === 404)) {
+        return;
+      }
+
       throw error;
     } finally {
       if (showLoading) {

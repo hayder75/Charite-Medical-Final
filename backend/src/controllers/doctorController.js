@@ -78,6 +78,15 @@ const createMultipleRadiologyOrdersSchema = z.object({
   })).min(1, 'At least one radiology order is required'),
 });
 
+
+const externalDiagnosticOrderSchema = z.object({
+  type: z.enum(['LAB', 'RADIOLOGY']),
+  requestedByName: z.string().trim().min(1, 'Requested by is required').max(255),
+  examinations: z.array(z.string().trim().min(1, 'Examination name is required').max(255)).min(1, 'At least one examination is required'),
+  relevantClinicalData: z.string().trim().max(5000).nullish(),
+  diagnosis: z.string().trim().max(5000).nullish()
+});
+
 const medicationOrderSchema = z.object({
   visitId: z.number(),
   patientId: z.string(),
@@ -142,6 +151,250 @@ const completeVisitSchema = z.object({
   appointmentTime: z.string().optional(),
   appointmentNotes: z.string().optional(),
 });
+
+
+const normalizeExternalOrderText = (value) => {
+  const trimmed = String(value || '').trim();
+  return trimmed || null;
+};
+
+const normalizeExternalOrderExaminations = (items = []) => {
+  return items
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+};
+
+const serializeExternalDiagnosticOrder = (order) => ({
+  ...order,
+  examinations: Array.isArray(order?.examinations) ? order.examinations : []
+});
+
+const getAccessibleVisitForExternalOrder = async (visitId, doctorId) => {
+  const visit = await prisma.visit.findUnique({
+    where: { id: visitId },
+    select: {
+      id: true,
+      patientId: true,
+      status: true,
+      suggestedDoctorId: true,
+      assignmentId: true,
+      batchOrders: {
+        where: { doctorId },
+        select: { id: true }
+      },
+      labTestOrders: {
+        where: { doctorId },
+        select: { id: true }
+      }
+    }
+  });
+
+  if (!visit) {
+    return null;
+  }
+
+  const assignment = await prisma.assignment.findFirst({
+    where: {
+      patientId: visit.patientId,
+      doctorId,
+      status: {
+        in: ['Active', 'Pending']
+      }
+    },
+    select: { id: true }
+  });
+
+  const hasAccess = Boolean(assignment) || visit.suggestedDoctorId === doctorId || visit.batchOrders.length > 0 || visit.labTestOrders.length > 0;
+  if (!hasAccess) {
+    return false;
+  }
+
+  return visit;
+};
+
+const rejectReadonlyExternalOrderVisit = (visit, res) => {
+  if (!visit) {
+    res.status(404).json({ error: 'Visit not found' });
+    return true;
+  }
+
+  if (['COMPLETED', 'CANCELLED'].includes(visit.status)) {
+    res.status(400).json({ error: 'Completed or cancelled visits are read-only. Open an active visit to place new orders.' });
+    return true;
+  }
+
+  return false;
+};
+
+exports.createExternalDiagnosticOrder = async (req, res) => {
+  try {
+    const visitId = parseInt(req.params.visitId, 10);
+    if (!visitId) {
+      return res.status(400).json({ error: 'Invalid visit id' });
+    }
+
+    const parsed = externalDiagnosticOrderSchema.parse(req.body);
+    const visit = await getAccessibleVisitForExternalOrder(visitId, req.user.id);
+
+    if (visit === null) {
+      return res.status(404).json({ error: 'Visit not found' });
+    }
+
+    if (!visit) {
+      return res.status(403).json({ error: 'Access denied to this visit' });
+    }
+
+    if (rejectReadonlyExternalOrderVisit(visit, res)) {
+      return;
+    }
+
+    const createdOrder = await prisma.externalDiagnosticOrder.create({
+      data: {
+        visitId,
+        patientId: visit.patientId,
+        doctorId: req.user.id,
+        requestedByName: parsed.requestedByName,
+        type: parsed.type,
+        examinations: normalizeExternalOrderExaminations(parsed.examinations),
+        relevantClinicalData: normalizeExternalOrderText(parsed.relevantClinicalData),
+        diagnosis: normalizeExternalOrderText(parsed.diagnosis)
+      },
+      include: {
+        doctor: {
+          select: {
+            id: true,
+            fullname: true,
+            role: true,
+            qualifications: true
+          }
+        }
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      order: serializeExternalDiagnosticOrder(createdOrder)
+    });
+  } catch (error) {
+    console.error('Error creating external diagnostic order:', error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.errors?.[0]?.message || 'Invalid external diagnostic order data' });
+    }
+    return res.status(500).json({ error: error.message || 'Failed to create external diagnostic order' });
+  }
+};
+
+exports.updateExternalDiagnosticOrder = async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    if (!orderId) {
+      return res.status(400).json({ error: 'Invalid external diagnostic order id' });
+    }
+
+    const parsed = externalDiagnosticOrderSchema.parse(req.body);
+    const existingOrder = await prisma.externalDiagnosticOrder.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        visitId: true
+      }
+    });
+
+    if (!existingOrder) {
+      return res.status(404).json({ error: 'External diagnostic order not found' });
+    }
+
+    const visit = await getAccessibleVisitForExternalOrder(existingOrder.visitId, req.user.id);
+    if (visit === null) {
+      return res.status(404).json({ error: 'Visit not found' });
+    }
+
+    if (!visit) {
+      return res.status(403).json({ error: 'Access denied to this visit' });
+    }
+
+    if (rejectReadonlyExternalOrderVisit(visit, res)) {
+      return;
+    }
+
+    const updatedOrder = await prisma.externalDiagnosticOrder.update({
+      where: { id: orderId },
+      data: {
+        requestedByName: parsed.requestedByName,
+        examinations: normalizeExternalOrderExaminations(parsed.examinations),
+        relevantClinicalData: normalizeExternalOrderText(parsed.relevantClinicalData),
+        diagnosis: normalizeExternalOrderText(parsed.diagnosis)
+      },
+      include: {
+        doctor: {
+          select: {
+            id: true,
+            fullname: true,
+            role: true,
+            qualifications: true
+          }
+        }
+      }
+    });
+
+    return res.json({
+      success: true,
+      order: serializeExternalDiagnosticOrder(updatedOrder)
+    });
+  } catch (error) {
+    console.error('Error updating external diagnostic order:', error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.errors?.[0]?.message || 'Invalid external diagnostic order data' });
+    }
+    return res.status(500).json({ error: error.message || 'Failed to update external diagnostic order' });
+  }
+};
+
+exports.deleteExternalDiagnosticOrder = async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    if (!orderId) {
+      return res.status(400).json({ error: 'Invalid external diagnostic order id' });
+    }
+
+    const existingOrder = await prisma.externalDiagnosticOrder.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        visitId: true
+      }
+    });
+
+    if (!existingOrder) {
+      return res.status(404).json({ error: 'External diagnostic order not found' });
+    }
+
+    const visit = await getAccessibleVisitForExternalOrder(existingOrder.visitId, req.user.id);
+    if (visit === null) {
+      return res.status(404).json({ error: 'Visit not found' });
+    }
+
+    if (!visit) {
+      return res.status(403).json({ error: 'Access denied to this visit' });
+    }
+
+    if (rejectReadonlyExternalOrderVisit(visit, res)) {
+      return;
+    }
+
+    await prisma.externalDiagnosticOrder.delete({
+      where: { id: orderId }
+    });
+
+    return res.json({
+      success: true,
+      message: 'External diagnostic order deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting external diagnostic order:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete external diagnostic order' });
+  }
+};
 
 exports.getInvestigationTypes = async (req, res) => {
   try {
@@ -223,6 +476,7 @@ exports.getQueue = async (req, res) => {
             id: true,
             name: true,
             type: true,
+            age: true,
             mobile: true,
             email: true,
             dob: true,
@@ -2510,6 +2764,20 @@ exports.getVisitDetails = async (req, res) => {
           }
         },
         orderBy: { createdAt: 'asc' }
+      },
+
+      externalDiagnosticOrders: {
+        include: {
+          doctor: {
+            select: {
+              id: true,
+              fullname: true,
+              role: true,
+              qualifications: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
       },
       // use the correct relation name from the schema
       patientDiagnoses: {

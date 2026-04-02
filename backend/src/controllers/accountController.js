@@ -27,6 +27,86 @@ const adjustBalanceSchema = z.object({
   reason: z.string()
 });
 
+const ADVANCE_ACCOUNT_TYPES = ['ADVANCE', 'BOTH'];
+
+const createPendingDepositRequest = async ({
+  accountId,
+  patientId,
+  amount,
+  requestedById,
+  paymentMethod = 'CASH',
+  bankName,
+  transNumber,
+  notes
+}) => {
+  const numericAmount = Number(amount);
+  if (!accountId || !patientId || !requestedById || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return null;
+  }
+
+  return prisma.accountRequest.create({
+    data: {
+      accountId,
+      patientId,
+      requestType: 'ADD_DEPOSIT',
+      amount: numericAmount,
+      paymentMethod,
+      bankName,
+      transNumber,
+      notes: notes || 'Advance deposit pending billing acceptance',
+      requestedById,
+      status: 'PENDING'
+    }
+  });
+};
+
+const addPendingDepositSummary = (account) => {
+  if (!account) {
+    return account;
+  }
+
+  const pendingDepositRequests = Array.isArray(account.accountRequests)
+    ? account.accountRequests.filter((request) => request.status === 'PENDING' && request.requestType === 'ADD_DEPOSIT')
+    : [];
+  const pendingDepositAmount = pendingDepositRequests.reduce((sum, request) => sum + Number(request.amount || 0), 0);
+
+  return {
+    ...account,
+    pendingDepositAmount,
+    hasPendingDepositAcceptance: pendingDepositAmount > 0,
+    pendingDepositRequests
+  };
+};
+
+const recordAdvanceCashReceipt = async ({ userId, amount, paymentMethod = 'CASH', description }) => {
+  const numericAmount = Number(amount);
+  if (!userId || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return;
+  }
+
+  const activeSession = await prisma.dailyCashSession.findFirst({
+    where: {
+      status: 'ACTIVE',
+      createdById: userId
+    }
+  });
+
+  if (!activeSession) {
+    return;
+  }
+
+  await prisma.cashTransaction.create({
+    data: {
+      sessionId: activeSession.id,
+      type: 'PAYMENT_RECEIVED',
+      amount: numericAmount,
+      description: description || 'Advance account deposit',
+      paymentMethod,
+      processedById: userId
+    }
+  });
+};
+
 // Get all patient accounts with filters
 exports.getAccounts = async (req, res) => {
   try {
@@ -89,12 +169,30 @@ exports.getAccounts = async (req, res) => {
         transactions: {
           orderBy: { createdAt: 'desc' },
           take: 10
+        },
+        accountRequests: {
+          where: {
+            status: 'PENDING',
+            requestType: 'ADD_DEPOSIT'
+          },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            requestedBy: {
+              select: {
+                fullname: true,
+                username: true,
+                role: true
+              }
+            }
+          }
         }
       },
       orderBy: { updatedAt: 'desc' }
     });
 
-    res.json({ accounts });
+    const summarizedAccounts = accounts.map(addPendingDepositSummary);
+
+    res.json({ accounts: summarizedAccounts });
   } catch (error) {
     console.error('Error in getAccounts:', error);
     res.status(500).json({ error: error.message });
@@ -140,6 +238,22 @@ exports.getAccountByPatientId = async (req, res) => {
               }
             }
           }
+        },
+        accountRequests: {
+          where: {
+            status: 'PENDING',
+            requestType: 'ADD_DEPOSIT'
+          },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            requestedBy: {
+              select: {
+                fullname: true,
+                username: true,
+                role: true
+              }
+            }
+          }
         }
       }
     });
@@ -154,7 +268,14 @@ exports.getAccountByPatientId = async (req, res) => {
       return res.json({ account: null, balance: 0, message: 'Account pending verification' });
     }
 
-    res.json({ account, balance: account.balance });
+    const summarizedAccount = addPendingDepositSummary(account);
+
+    res.json({
+      account: summarizedAccount,
+      balance: summarizedAccount.balance,
+      pendingDepositAmount: summarizedAccount.pendingDepositAmount || 0,
+      hasPendingDepositAcceptance: Boolean(summarizedAccount.hasPendingDepositAcceptance)
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -175,7 +296,17 @@ exports.getPatientCreditSummary = async (req, res) => {
         debtOwed: true,
         totalDeposited: true,
         totalUsed: true,
-        totalDebtPaid: true
+        totalDebtPaid: true,
+        creditLimit: true,
+        accountRequests: {
+          where: {
+            status: 'PENDING',
+            requestType: 'ADD_DEPOSIT'
+          },
+          select: {
+            amount: true
+          }
+        }
       }
     });
 
@@ -199,6 +330,11 @@ exports.getPatientCreditSummary = async (req, res) => {
         message: 'Account pending verification'
       });
     }
+
+    const pendingAdvanceAmount = (account.accountRequests || []).reduce(
+      (sum, request) => sum + Number(request.amount || 0),
+      0
+    );
 
     // Calculate credit available
     let creditAvailable = 0;
@@ -226,7 +362,8 @@ exports.getPatientCreditSummary = async (req, res) => {
       totalDeposited: account.totalDeposited || 0,
       totalUsed: account.totalUsed || 0,
       totalDebtPaid: account.totalDebtPaid || 0,
-      balance: account.balance
+      balance: account.balance,
+      pendingAdvanceAmount
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -250,114 +387,206 @@ exports.createAccount = async (req, res) => {
       where: { patientId: data.patientId }
     });
 
-    const isAdmin = req.user.role === 'ADMIN';
+    const canAutoApprove = ['ADMIN', 'BILLING_OFFICER'].includes(req.user.role);
+    const requestedAmount = Number(data.initialDeposit || 0);
+    let message = account ? 'Account updated successfully' : 'Account created successfully';
+    let pendingDepositAmount = 0;
 
     if (account) {
+      const existingAccount = account;
+
       // Logic: Allow them to co-exist! If changing type to something different but not NONE, merge to BOTH.
       let finalAccountType = data.accountType;
 
       if (account.accountType !== 'NONE' && account.accountType !== data.accountType && data.accountType !== 'NONE' && account.accountType !== 'BOTH') {
-        // If they had CREDIT and want ADVANCE, or had ADVANCE and want CREDIT => merge to BOTH.
         finalAccountType = 'BOTH';
       }
 
-      // Update existing account
+      const shouldQueueInitialAdvanceDeposit = req.user.role === 'ADMIN'
+        && requestedAmount > 0
+        && ADVANCE_ACCOUNT_TYPES.includes(finalAccountType);
+
+      const updateData = {
+        accountType: finalAccountType,
+        status: canAutoApprove ? 'VERIFIED' : account.status,
+        verifiedById: canAutoApprove ? req.user.id : account.verifiedById,
+        verifiedAt: canAutoApprove ? new Date() : account.verifiedAt
+      };
+
+      if (requestedAmount > 0 && finalAccountType === 'CREDIT') {
+        updateData.creditLimit = { increment: requestedAmount };
+      }
+
       account = await prisma.patientAccount.update({
         where: { patientId: data.patientId },
-        data: {
-          accountType: finalAccountType,
-          status: isAdmin ? 'VERIFIED' : account.status,
-          verifiedById: isAdmin ? req.user.id : account.verifiedById,
-          verifiedAt: isAdmin ? new Date() : account.verifiedAt
-        },
+        data: updateData,
         include: { patient: true }
       });
 
-      // If initial deposit provided, process it as a deposit
-      if (data.initialDeposit && data.initialDeposit > 0) {
-        await prisma.accountDeposit.create({
-          data: {
+      if (requestedAmount > 0) {
+        if (shouldQueueInitialAdvanceDeposit) {
+          await createPendingDepositRequest({
             accountId: account.id,
             patientId: data.patientId,
-            amount: data.initialDeposit,
+            amount: requestedAmount,
+            requestedById: req.user.id,
             paymentMethod: 'CASH',
-            depositedById: req.user.id,
-            notes: 'Deposit upon account upgrade'
-          }
-        });
+            notes: 'Initial/admin-set advance deposit pending billing acceptance'
+          });
+          pendingDepositAmount = requestedAmount;
+          message = 'Account updated successfully. The advance money is pending billing acceptance before it can be used.';
+        } else if (finalAccountType === 'CREDIT') {
+          await prisma.accountTransaction.create({
+            data: {
+              accountId: account.id,
+              patientId: data.patientId,
+              type: 'ADJUSTMENT',
+              subAccount: 'CREDIT',
+              amount: requestedAmount,
+              balanceBefore: existingAccount.creditLimit || 0,
+              balanceAfter: (existingAccount.creditLimit || 0) + requestedAmount,
+              notes: 'Initial credit limit added',
+              processedById: req.user.id
+            }
+          });
+        } else {
+          await prisma.accountDeposit.create({
+            data: {
+              accountId: account.id,
+              patientId: data.patientId,
+              amount: requestedAmount,
+              paymentMethod: 'CASH',
+              depositedById: req.user.id,
+              notes: 'Deposit upon account upgrade'
+            }
+          });
 
-        account = await prisma.patientAccount.update({
-          where: { id: account.id },
-          data: {
-            balance: { increment: data.initialDeposit },
-            totalDeposited: { increment: data.initialDeposit }
-          },
-          include: { patient: true }
-        });
+          account = await prisma.patientAccount.update({
+            where: { id: account.id },
+            data: {
+              balance: { increment: requestedAmount },
+              totalDeposited: { increment: requestedAmount }
+            },
+            include: { patient: true }
+          });
 
-        await prisma.accountTransaction.create({
-          data: {
-            accountId: account.id,
-            patientId: data.patientId,
-            type: 'DEPOSIT',
-            subAccount: 'ADVANCE',
-            amount: data.initialDeposit,
-            balanceBefore: account.balance - data.initialDeposit,
-            balanceAfter: account.balance,
-            notes: 'Deposit added',
-            processedById: req.user.id
+          await prisma.accountTransaction.create({
+            data: {
+              accountId: account.id,
+              patientId: data.patientId,
+              type: 'DEPOSIT',
+              subAccount: 'ADVANCE',
+              amount: requestedAmount,
+              balanceBefore: account.balance - requestedAmount,
+              balanceAfter: account.balance,
+              notes: 'Deposit added',
+              processedById: req.user.id
+            }
+          });
+
+          if (ADVANCE_ACCOUNT_TYPES.includes(account.accountType)) {
+            await recordAdvanceCashReceipt({
+              userId: req.user.id,
+              amount: requestedAmount,
+              paymentMethod: 'CASH',
+              description: `Initial advance deposit from ${account.patient?.name || 'patient'}`
+            });
           }
-        });
+        }
       }
     } else {
-      // Create new account - Auto-approve when created by admin
-      // Admin creates accounts directly, so they are automatically verified
+      const shouldQueueInitialAdvanceDeposit = req.user.role === 'ADMIN'
+        && requestedAmount > 0
+        && ADVANCE_ACCOUNT_TYPES.includes(data.accountType);
+      const initialAdvanceBalance = shouldQueueInitialAdvanceDeposit || data.accountType === 'CREDIT'
+        ? 0
+        : requestedAmount;
+
       account = await prisma.patientAccount.create({
         data: {
           patientId: data.patientId,
           accountType: data.accountType,
-          balance: data.initialDeposit || 0,
-          totalDeposited: data.initialDeposit || 0,
-          status: isAdmin ? 'VERIFIED' : 'PENDING', // Auto-approve if admin
-          verifiedById: isAdmin ? req.user.id : null,
-          verifiedAt: isAdmin ? new Date() : null
+          balance: initialAdvanceBalance,
+          creditLimit: data.accountType === 'CREDIT' ? requestedAmount : 0,
+          totalDeposited: data.accountType === 'CREDIT' ? 0 : initialAdvanceBalance,
+          status: canAutoApprove ? 'VERIFIED' : 'PENDING',
+          verifiedById: canAutoApprove ? req.user.id : null,
+          verifiedAt: canAutoApprove ? new Date() : null
         },
         include: { patient: true }
       });
 
-      // If initial deposit provided, create deposit record
-      if (data.initialDeposit && data.initialDeposit > 0) {
-        await prisma.accountDeposit.create({
-          data: {
+      if (requestedAmount > 0) {
+        if (shouldQueueInitialAdvanceDeposit) {
+          await createPendingDepositRequest({
             accountId: account.id,
             patientId: data.patientId,
-            amount: data.initialDeposit,
+            amount: requestedAmount,
+            requestedById: req.user.id,
             paymentMethod: 'CASH',
-            depositedById: req.user.id,
-            notes: 'Initial deposit'
-          }
-        });
+            notes: 'Initial admin-set advance deposit pending billing acceptance'
+          });
+          pendingDepositAmount = requestedAmount;
+          message = 'Account created successfully. The advance money is pending billing acceptance before it can be used.';
+        } else if (data.accountType === 'CREDIT') {
+          await prisma.accountTransaction.create({
+            data: {
+              accountId: account.id,
+              patientId: data.patientId,
+              type: 'ADJUSTMENT',
+              subAccount: 'CREDIT',
+              amount: requestedAmount,
+              balanceBefore: 0,
+              balanceAfter: requestedAmount,
+              notes: 'Initial credit limit',
+              processedById: req.user.id
+            }
+          });
+        } else {
+          await prisma.accountDeposit.create({
+            data: {
+              accountId: account.id,
+              patientId: data.patientId,
+              amount: requestedAmount,
+              paymentMethod: 'CASH',
+              depositedById: req.user.id,
+              notes: 'Initial deposit'
+            }
+          });
 
-        // Create transaction log
-        await prisma.accountTransaction.create({
-          data: {
-            accountId: account.id,
-            patientId: data.patientId,
-            type: data.accountType === 'CREDIT' ? 'ADJUSTMENT' : 'DEPOSIT',
-            subAccount: data.accountType === 'CREDIT' ? 'CREDIT' : 'ADVANCE',
-            amount: data.initialDeposit,
-            balanceBefore: 0,
-            balanceAfter: data.initialDeposit,
-            notes: 'Initial deposit',
-            processedById: req.user.id
+          await prisma.accountTransaction.create({
+            data: {
+              accountId: account.id,
+              patientId: data.patientId,
+              type: 'DEPOSIT',
+              subAccount: 'ADVANCE',
+              amount: requestedAmount,
+              balanceBefore: 0,
+              balanceAfter: requestedAmount,
+              notes: 'Initial deposit',
+              processedById: req.user.id
+            }
+          });
+
+          if (ADVANCE_ACCOUNT_TYPES.includes(account.accountType)) {
+            await recordAdvanceCashReceipt({
+              userId: req.user.id,
+              amount: requestedAmount,
+              paymentMethod: 'CASH',
+              description: `Initial advance deposit from ${account.patient?.name || 'patient'}`
+            });
           }
-        });
+        }
       }
     }
 
     res.json({
-      message: 'Account updated successfully',
-      account
+      message,
+      account: {
+        ...account,
+        pendingDepositAmount,
+        hasPendingDepositAcceptance: pendingDepositAmount > 0
+      }
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -384,6 +613,24 @@ exports.addDeposit = async (req, res) => {
 
     if (account.patientId !== data.patientId) {
       return res.status(400).json({ error: 'Patient ID mismatch' });
+    }
+
+    if (req.user.role === 'ADMIN' && !data.isCreditAdd && ADVANCE_ACCOUNT_TYPES.includes(account.accountType)) {
+      const pendingRequest = await createPendingDepositRequest({
+        accountId: data.accountId,
+        patientId: data.patientId,
+        amount: data.amount,
+        requestedById: req.user.id,
+        paymentMethod: data.paymentMethod,
+        bankName: data.bankName,
+        transNumber: data.transNumber,
+        notes: data.notes || 'Admin-set advance deposit pending billing acceptance'
+      });
+
+      return res.json({
+        message: 'Deposit request sent to billing for acceptance. The money will not be usable until billing accepts it.',
+        pendingRequest
+      });
     }
 
     // For CREDIT limit increase
@@ -457,6 +704,13 @@ exports.addDeposit = async (req, res) => {
         notes: data.notes || 'Deposit added',
         processedById: req.user.id
       }
+    });
+
+    await recordAdvanceCashReceipt({
+      userId: req.user.id,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod || 'CASH',
+      description: `Advance deposit from ${updatedAccount.patient?.name || 'patient'}`
     });
 
     res.json({
@@ -632,14 +886,78 @@ exports.adjustBalance = async (req, res) => {
     const data = adjustBalanceSchema.parse(req.body);
 
     const account = await prisma.patientAccount.findUnique({
-      where: { id: data.accountId }
+      where: { id: data.accountId },
+      include: {
+        patient: true,
+        accountRequests: {
+          where: {
+            status: 'PENDING',
+            requestType: 'ADD_DEPOSIT'
+          },
+          orderBy: { createdAt: 'desc' }
+        }
+      }
     });
 
     if (!account) {
       return res.status(404).json({ error: 'Account not found' });
     }
 
-    // Update balance
+    const pendingDepositAmount = (account.accountRequests || []).reduce(
+      (sum, request) => sum + Number(request.amount || 0),
+      0
+    );
+
+    if (ADVANCE_ACCOUNT_TYPES.includes(account.accountType) && data.amount > account.balance) {
+      const additionalPendingAmount = Math.max(0, data.amount - (account.balance + pendingDepositAmount));
+
+      if (additionalPendingAmount <= 0) {
+        return res.json({
+          message: 'That money is already waiting for billing acceptance. The usable balance will stay unchanged until billing accepts it.',
+          account: {
+            ...account,
+            pendingDepositAmount,
+            hasPendingDepositAcceptance: pendingDepositAmount > 0
+          }
+        });
+      }
+
+      const pendingRequest = await createPendingDepositRequest({
+        accountId: data.accountId,
+        patientId: account.patientId,
+        amount: additionalPendingAmount,
+        requestedById: req.user.id,
+        paymentMethod: 'CASH',
+        notes: `${data.reason || 'Balance updated by admin'} (pending billing acceptance)`
+      });
+
+      return res.json({
+        message: `ETB ${additionalPendingAmount.toFixed(2)} sent to billing for acceptance. It cannot be used until billing accepts it.`,
+        account: {
+          ...account,
+          pendingDepositAmount: pendingDepositAmount + additionalPendingAmount,
+          hasPendingDepositAcceptance: true
+        },
+        pendingRequest
+      });
+    }
+
+    if ((account.accountRequests || []).length > 0) {
+      await prisma.accountRequest.updateMany({
+        where: {
+          accountId: data.accountId,
+          status: 'PENDING',
+          requestType: 'ADD_DEPOSIT'
+        },
+        data: {
+          status: 'REJECTED',
+          verifiedById: req.user.id,
+          verifiedAt: new Date(),
+          rejectionReason: 'Cancelled by admin balance adjustment'
+        }
+      });
+    }
+
     const updatedAccount = await prisma.patientAccount.update({
       where: { id: data.accountId },
       data: {
@@ -648,7 +966,6 @@ exports.adjustBalance = async (req, res) => {
       include: { patient: true }
     });
 
-    // Create transaction log
     await prisma.accountTransaction.create({
       data: {
         accountId: data.accountId,
@@ -665,13 +982,63 @@ exports.adjustBalance = async (req, res) => {
 
     res.json({
       message: 'Balance adjusted successfully',
-      account: updatedAccount
+      account: {
+        ...updatedAccount,
+        pendingDepositAmount: 0,
+        hasPendingDepositAcceptance: false
+      }
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
     res.status(500).json({ error: error.message });
+  }
+};
+
+// Delete account (admin only)
+exports.deleteAccount = async (req, res) => {
+  try {
+    const { accountId } = req.params;
+
+    const account = await prisma.patientAccount.findUnique({
+      where: { id: accountId },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.accountRequest.deleteMany({
+        where: {
+          OR: [
+            { accountId },
+            { patientId: account.patientId }
+          ]
+        }
+      });
+
+      await tx.accountDeposit.deleteMany({ where: { accountId } });
+      await tx.accountTransaction.deleteMany({ where: { accountId } });
+      await tx.patientAccount.delete({ where: { id: accountId } });
+    });
+
+    res.json({
+      success: true,
+      message: `Account deleted successfully for ${account.patient?.name || 'patient'}`
+    });
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete account' });
   }
 };
 
@@ -804,14 +1171,26 @@ exports.createAccountRequest = async (req, res) => {
   }
 };
 
-// Get all requests by status (admin view)
+// Get all requests by status
 exports.getPendingRequests = async (req, res) => {
   try {
     const status = req.query.status || 'PENDING';
+    const requestType = req.query.requestType;
+
+    const whereClause = {
+      status
+    };
+
+    if (requestType) {
+      whereClause.requestType = requestType;
+    }
+
+    if (req.user?.role === 'BILLING_OFFICER') {
+      whereClause.requestType = 'ADD_DEPOSIT';
+    }
+
     const requests = await prisma.accountRequest.findMany({
-      where: {
-        status: status
-      },
+      where: whereClause,
       include: {
         patient: {
           select: {
@@ -825,13 +1204,15 @@ exports.getPendingRequests = async (req, res) => {
         requestedBy: {
           select: {
             fullname: true,
-            username: true
+            username: true,
+            role: true
           }
         },
         verifiedBy: {
           select: {
             fullname: true,
-            username: true
+            username: true,
+            role: true
           }
         }
       },
@@ -844,10 +1225,11 @@ exports.getPendingRequests = async (req, res) => {
   }
 };
 
-// Approve request (admin only)
+// Approve request (admin or billing for deposit acceptance)
 exports.approveRequest = async (req, res) => {
   try {
     const { requestId } = req.params;
+    const { paymentMethod, bankName, transNumber, notes } = req.body || {};
 
     const request = await prisma.accountRequest.findUnique({
       where: { id: requestId },
@@ -860,14 +1242,19 @@ exports.approveRequest = async (req, res) => {
     if (!request) return res.status(404).json({ error: 'Request not found' });
     if (request.status !== 'PENDING') return res.status(400).json({ error: 'Request already processed' });
 
+    if (req.user.role === 'BILLING_OFFICER' && request.requestType !== 'ADD_DEPOSIT') {
+      return res.status(403).json({ error: 'Billing can only accept pending advance deposits' });
+    }
+
     // Process based on request type
     if (request.requestType === 'CREATE_ACCOUNT') {
-      // Create the account
       const account = await prisma.patientAccount.create({
         data: {
           patientId: request.patientId,
           accountType: request.accountType,
-          balance: request.amount || 0,
+          balance: request.accountType === 'CREDIT' ? 0 : (request.amount || 0),
+          creditLimit: request.accountType === 'CREDIT' ? (request.amount || 0) : 0,
+          totalDeposited: request.accountType === 'CREDIT' ? 0 : (request.amount || 0),
           status: 'VERIFIED',
           verifiedById: req.user.id,
           verifiedAt: new Date()
@@ -875,7 +1262,6 @@ exports.approveRequest = async (req, res) => {
         include: { patient: true }
       });
 
-      // Update request
       await prisma.accountRequest.update({
         where: { id: requestId },
         data: {
@@ -889,10 +1275,9 @@ exports.approveRequest = async (req, res) => {
       res.json({ message: 'Account created successfully', account });
 
     } else if (request.requestType === 'ADD_CREDIT') {
-      // Add credit to existing account
       await prisma.patientAccount.update({
         where: { id: request.accountId },
-        data: { balance: { increment: request.amount } }
+        data: { creditLimit: { increment: request.amount || 0 } }
       });
 
       await prisma.accountRequest.update({
@@ -907,31 +1292,59 @@ exports.approveRequest = async (req, res) => {
       res.json({ message: 'Credit added successfully' });
 
     } else if (request.requestType === 'ADD_DEPOSIT') {
-      // Add deposit to advance account
       const account = await prisma.patientAccount.findUnique({
-        where: { id: request.accountId }
+        where: { id: request.accountId },
+        include: { patient: true }
       });
 
-      await prisma.patientAccount.update({
+      if (!account) {
+        return res.status(404).json({ error: 'Account not found for this request' });
+      }
+
+      const approvedPaymentMethod = paymentMethod || request.paymentMethod || 'CASH';
+      const approvedNotes = notes || request.notes || 'Deposit accepted by billing';
+
+      const updatedAccount = await prisma.patientAccount.update({
         where: { id: request.accountId },
         data: {
-          balance: { increment: request.amount },
-          totalDeposited: { increment: request.amount }
-        }
+          balance: { increment: request.amount || 0 },
+          totalDeposited: { increment: request.amount || 0 }
+        },
+        include: { patient: true }
       });
 
-      // Create deposit record
       await prisma.accountDeposit.create({
         data: {
           accountId: request.accountId,
           patientId: request.patientId,
-          amount: request.amount,
-          paymentMethod: request.paymentMethod,
-          bankName: request.bankName,
-          transNumber: request.transNumber,
-          notes: request.notes,
+          amount: request.amount || 0,
+          paymentMethod: approvedPaymentMethod,
+          bankName: bankName ?? request.bankName,
+          transNumber: transNumber ?? request.transNumber,
+          notes: approvedNotes,
           depositedById: req.user.id
         }
+      });
+
+      await prisma.accountTransaction.create({
+        data: {
+          accountId: request.accountId,
+          patientId: request.patientId,
+          type: 'DEPOSIT',
+          subAccount: 'ADVANCE',
+          amount: request.amount || 0,
+          balanceBefore: account.balance,
+          balanceAfter: updatedAccount.balance,
+          notes: approvedNotes,
+          processedById: req.user.id
+        }
+      });
+
+      await recordAdvanceCashReceipt({
+        userId: req.user.id,
+        amount: request.amount || 0,
+        paymentMethod: approvedPaymentMethod,
+        description: `Accepted pending advance deposit from ${updatedAccount.patient?.name || 'patient'}`
       });
 
       await prisma.accountRequest.update({
@@ -939,11 +1352,18 @@ exports.approveRequest = async (req, res) => {
         data: {
           status: 'APPROVED',
           verifiedById: req.user.id,
-          verifiedAt: new Date()
+          verifiedAt: new Date(),
+          paymentMethod: approvedPaymentMethod,
+          bankName: bankName ?? request.bankName,
+          transNumber: transNumber ?? request.transNumber,
+          notes: approvedNotes
         }
       });
 
-      res.json({ message: 'Deposit added successfully' });
+      res.json({
+        message: 'Deposit accepted successfully and added to daily cash',
+        account: updatedAccount
+      });
 
     } else if (request.requestType === 'RETURN_MONEY') {
       // Return money to clear debt
@@ -972,7 +1392,7 @@ exports.approveRequest = async (req, res) => {
   }
 };
 
-// Reject request (admin only)
+// Reject request (admin or billing for pending advance deposits)
 exports.rejectRequest = async (req, res) => {
   try {
     const { requestId } = req.params;
@@ -985,13 +1405,17 @@ exports.rejectRequest = async (req, res) => {
     if (!request) return res.status(404).json({ error: 'Request not found' });
     if (request.status !== 'PENDING') return res.status(400).json({ error: 'Request already processed' });
 
+    if (req.user.role === 'BILLING_OFFICER' && request.requestType !== 'ADD_DEPOSIT') {
+      return res.status(403).json({ error: 'Billing can only reject pending advance deposits' });
+    }
+
     await prisma.accountRequest.update({
       where: { id: requestId },
       data: {
         status: 'REJECTED',
         verifiedById: req.user.id,
         verifiedAt: new Date(),
-        rejectionReason: reason || 'Rejected by administrator'
+        rejectionReason: reason || (req.user.role === 'BILLING_OFFICER' ? 'Rejected by billing' : 'Rejected by administrator')
       }
     });
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Scan, Clock, CheckCircle, AlertTriangle, FileText, Upload, Image, User, Calendar, Stethoscope, X, Plus, Eye, Printer } from 'lucide-react';
+import { Scan, Clock, CheckCircle, AlertTriangle, FileText, Upload, Image, User, Calendar, Stethoscope, X, Plus, Eye, Printer, Pencil } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 
@@ -36,6 +36,8 @@ const RadiologyOrders = () => {
   const [uploadingFiles, setUploadingFiles] = useState({});
   const [expandedTests, setExpandedTests] = useState({});
   const [statusFilter, setStatusFilter] = useState('PENDING');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isEditMode, setIsEditMode] = useState(false);
 
   useEffect(() => {
     fetchOrders();
@@ -70,7 +72,9 @@ const RadiologyOrders = () => {
 
         return order;
       });
-      const allOrders = [...batchOrders, ...walkInOrders];
+      const allOrders = [...batchOrders, ...walkInOrders].sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+      );
       setOrders(allOrders);
     } catch (error) {
       toast.error('Failed to fetch radiology orders');
@@ -81,10 +85,27 @@ const RadiologyOrders = () => {
   };
 
   const getFilteredOrders = () => {
-    // Backend already filters by status, but we keep this for safety
-    // and to handle 'ALL' if we ever add it to the backend
-    if (statusFilter === 'ALL') return orders;
-    return orders;
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    return orders.filter((order) => {
+      // Backend filters by status already. Keep this guard for consistency.
+      const statusMatches = statusFilter === 'ALL'
+        ? true
+        : statusFilter === 'PENDING'
+          ? order.status !== 'COMPLETED'
+          : order.status === 'COMPLETED';
+
+      const patientName = order?.patient?.name?.toLowerCase() || '';
+      const patientId = String(order?.patient?.id || '').toLowerCase();
+      const orderDisplayId = formatDisplayOrderId(order).toLowerCase();
+
+      const searchMatches = !normalizedQuery
+        || patientName.includes(normalizedQuery)
+        || patientId.includes(normalizedQuery)
+        || orderDisplayId.includes(normalizedQuery);
+
+      return statusMatches && searchMatches;
+    });
   };
 
   const fetchExistingResults = async (batchOrderId) => {
@@ -115,6 +136,8 @@ const RadiologyOrders = () => {
   const handleOrderClick = async (order) => {
     setSelectedOrder(order);
     setShowReportForm(true);
+    // Completed reports open in read-only mode until user chooses Edit.
+    setIsEditMode(order.status !== 'COMPLETED');
 
     // Initialize test results for each radiology test
     const initialResults = {};
@@ -329,13 +352,16 @@ const RadiologyOrders = () => {
 
       console.log(`✅ [handleCompleteBatchOrder] Response:`, response.data);
 
-      toast.success('All radiology tests completed successfully');
+      toast.success(selectedOrder?.status === 'COMPLETED'
+        ? 'Radiology results updated successfully'
+        : 'All radiology tests completed successfully');
 
       // Close the form first
       setShowReportForm(false);
       setSelectedOrder(null);
       setTestResults({});
       setExpandedTests({});
+      setIsEditMode(false);
 
       // Wait a moment before refreshing to ensure backend has updated
       setTimeout(() => {
@@ -823,7 +849,8 @@ const RadiologyOrders = () => {
 
       {/* Status Filter */}
       <div className="mb-6">
-        <div className="flex items-center space-x-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center space-x-4">
           <label className="text-sm font-medium text-gray-700">Filter by Status:</label>
           <select
             value={statusFilter}
@@ -837,6 +864,14 @@ const RadiologyOrders = () => {
           <span className="text-sm text-gray-500">
             Showing {getFilteredOrders().length} of {orders.length} orders
           </span>
+          </div>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search patient name, patient ID, or order ID"
+            className="w-full md:w-96 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
       </div>
 
@@ -1067,6 +1102,7 @@ const RadiologyOrders = () => {
                     const testResult = testResults[testId] || {};
                     const isExpanded = expandedTests[testId];
                     const isCompleted = testResult.completed;
+                    const isReadOnly = isCompleted && !isEditMode;
 
                     return (
                       <div key={`${testId}-${index}`} className="border rounded-lg p-4">
@@ -1107,7 +1143,7 @@ const RadiologyOrders = () => {
                                 className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                                 rows={15}
                                 placeholder="Findings will be pre-filled from template. Edit as needed..."
-                                disabled={isCompleted}
+                                disabled={isReadOnly}
                               />
                               <p className="text-xs text-gray-500 mt-1">
                                 Template text pre-loaded. Edit, delete, or keep as needed. This field is optional.
@@ -1125,7 +1161,7 @@ const RadiologyOrders = () => {
                                 className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                                 rows={10}
                                 placeholder="Conclusion will be pre-filled from template. Edit as needed..."
-                                disabled={isCompleted}
+                                disabled={isReadOnly}
                               />
                               <p className="text-xs text-gray-500 mt-1">
                                 Template text pre-loaded. Edit, delete, or keep as needed. This field is optional.
@@ -1147,11 +1183,11 @@ const RadiologyOrders = () => {
                                   }}
                                   className="hidden"
                                   id={`file-upload-${testId}`}
-                                  disabled={isCompleted}
+                                  disabled={isReadOnly}
                                 />
                                 <label
                                   htmlFor={`file-upload-${testId}`}
-                                  className={`flex flex-col items-center justify-center py-4 cursor-pointer ${isCompleted ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
+                                  className={`flex flex-col items-center justify-center py-4 cursor-pointer ${isReadOnly ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
                                     }`}
                                 >
                                   <Upload className="h-8 w-8 text-gray-400 mb-2" />
@@ -1200,17 +1236,45 @@ const RadiologyOrders = () => {
                     setSelectedOrder(null);
                     setTestResults({});
                     setExpandedTests({});
+                    setIsEditMode(false);
                   }}
                   className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleCompleteBatchOrder}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                >
-                  Complete Batch Order
-                </button>
+                {selectedOrder.status === 'COMPLETED' ? (
+                  <>
+                    <button
+                      onClick={(e) => handlePrintResults(e, selectedOrder)}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                    >
+                      <Printer className="h-4 w-4" />
+                      Print
+                    </button>
+                    <button
+                      onClick={() => setIsEditMode((prev) => !prev)}
+                      className={`px-4 py-2 rounded-lg flex items-center gap-2 ${isEditMode ? 'bg-yellow-500 text-white hover:bg-yellow-600' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      {isEditMode ? 'Cancel Edit' : 'Edit'}
+                    </button>
+                    {isEditMode && (
+                      <button
+                        onClick={handleCompleteBatchOrder}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >
+                        Update Results
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={handleCompleteBatchOrder}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    Complete Batch Order
+                  </button>
+                )}
               </div>
             </div>
           </div>

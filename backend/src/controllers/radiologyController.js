@@ -30,7 +30,9 @@ exports.getOrders = async (req, res) => {
 
     const statusFilter = status === 'COMPLETED'
       ? { in: ['COMPLETED'] }
-      : { in: ['PAID', 'QUEUED', 'IN_PROGRESS'] };
+      : status === 'ALL'
+        ? { in: ['PAID', 'QUEUED', 'IN_PROGRESS', 'COMPLETED'] }
+        : { in: ['PAID', 'QUEUED', 'IN_PROGRESS'] };
 
     // Get batch orders instead of individual radiology orders
     const batchOrders = await prisma.batchOrder.findMany({
@@ -93,7 +95,7 @@ exports.getOrders = async (req, res) => {
         attachments: true
       },
       orderBy: [
-        { createdAt: 'asc' } // First come, first served
+        { createdAt: 'desc' } // Newest first for queue visibility
       ]
     });
 
@@ -122,16 +124,14 @@ exports.getOrders = async (req, res) => {
     const walkInOrdersRaw = await prisma.radiologyOrder.findMany({
       where: {
         isWalkIn: true,
-        status: statusFilter,
-        billing: { status: 'PAID' }
+        status: statusFilter
       },
       include: {
         patient: { select: { id: true, name: true, mobile: true, type: true, email: true } },
         type: true,
-        billing: { select: { id: true, status: true } },
         radiologyResults: { include: { testType: true, attachments: true } }
       },
-      orderBy: { createdAt: 'asc' }
+      orderBy: { createdAt: 'desc' }
     });
 
     // Group walk-in orders by patient and billing (similar to lab orders)
@@ -181,7 +181,9 @@ exports.getOrders = async (req, res) => {
       }
     });
 
-    const groupedWalkInOrders = Object.values(groupedOrders);
+    const groupedWalkInOrders = Object.values(groupedOrders).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
 
     res.json({ batchOrders: filteredOrders, walkInOrders: groupedWalkInOrders });
   } catch (error) {
@@ -226,16 +228,6 @@ exports.fillReport = async (req, res) => {
 
         if (walkInOrders.length > 0) {
           isWalkIn = true;
-
-          // Check if all orders in this group are already completed
-          const allCompleted = walkInOrders.every(o => o.status === 'COMPLETED');
-          if (allCompleted) {
-            console.log(`ℹ️ [fillReport] All walk-in orders in billing group ${firstWalkInOrder.billingId} are already COMPLETED.`);
-            return res.status(400).json({
-              error: 'This walk-in radiology report has already been submitted and completed.'
-            });
-          }
-
           console.log(`✅ [fillReport] Found ${walkInOrders.length} walk-in orders in billing group`);
         }
       }
@@ -281,13 +273,6 @@ exports.fillReport = async (req, res) => {
       });
     }
 
-    if (batchOrder && batchOrder.status === 'COMPLETED') {
-      console.log(`ℹ️ [fillReport] Batch order ${orderId} is already COMPLETED.`);
-      return res.status(400).json({
-        error: 'This radiology report has already been submitted and completed.'
-      });
-    }
-
     // Create individual radiology results for each test
     const createdResults = [];
 
@@ -303,31 +288,61 @@ exports.fillReport = async (req, res) => {
           continue;
         }
 
-        // Create radiology result linked to the walk-in order (using orderId, not batchOrderId)
-        const radiologyResult = await prisma.radiologyResult.create({
-          data: {
-            orderId: walkInOrder.id,  // Link to RadiologyOrder
-            testTypeId: testTypeId,
-            resultText: resultText || findings || conclusion || 'No result provided',
-            findings: findings || null,
-            conclusion: conclusion || null,
-            additionalNotes: additionalNotes || '',
-            status: 'COMPLETED'
+        // Update existing result for this test or create a new one.
+        const existingResult = await prisma.radiologyResult.findFirst({
+          where: {
+            orderId: walkInOrder.id,
+            testTypeId: testTypeId
           }
         });
+
+        const resultData = {
+          resultText: resultText || findings || conclusion || 'No result provided',
+          findings: findings || null,
+          conclusion: conclusion || null,
+          additionalNotes: additionalNotes || '',
+          status: 'COMPLETED'
+        };
+
+        const radiologyResult = existingResult
+          ? await prisma.radiologyResult.update({
+            where: { id: existingResult.id },
+            data: resultData
+          })
+          : await prisma.radiologyResult.create({
+            data: {
+              orderId: walkInOrder.id,
+              testTypeId: testTypeId,
+              ...resultData
+            }
+          });
 
         // Handle file attachments for this specific test
         if (attachments && attachments.length > 0) {
           for (const attachment of attachments) {
-            await prisma.radiologyResultFile.create({
-              data: {
+            const fileUrl = attachment.path || attachment.fileUrl || attachment;
+            const fileName = attachment.originalName || attachment.fileName || 'uploaded_file';
+            const fileType = attachment.type || attachment.fileType || 'image/png';
+
+            const existingFile = await prisma.radiologyResultFile.findFirst({
+              where: {
                 resultId: radiologyResult.id,
-                fileUrl: attachment.path || attachment.fileUrl || attachment,
-                fileName: attachment.originalName || attachment.fileName || 'uploaded_file',
-                fileType: attachment.type || attachment.fileType || 'image/png',
-                uploadedBy: radiologistId
+                fileUrl,
+                fileName
               }
             });
+
+            if (!existingFile) {
+              await prisma.radiologyResultFile.create({
+                data: {
+                  resultId: radiologyResult.id,
+                  fileUrl,
+                  fileName,
+                  fileType,
+                  uploadedBy: radiologistId
+                }
+              });
+            }
           }
         }
 
@@ -358,32 +373,62 @@ exports.fillReport = async (req, res) => {
     for (const testResult of testResults) {
       const { testTypeId, resultText, findings, conclusion, additionalNotes, attachments } = testResult;
 
-      // Create radiology result with findings and conclusion
-      const radiologyResult = await prisma.radiologyResult.create({
-        data: {
+      // Update existing result for this test or create a new one.
+      const existingResult = await prisma.radiologyResult.findFirst({
+        where: {
           batchOrderId: orderId,
-          testTypeId: testTypeId,
-          resultText: resultText || findings || conclusion || 'No result provided', // Keep for backward compatibility
-          findings: findings || null,
-          conclusion: conclusion || null,
-          additionalNotes: additionalNotes || '',
-          status: 'COMPLETED'
+          testTypeId: testTypeId
         }
       });
+
+      const resultData = {
+        resultText: resultText || findings || conclusion || 'No result provided',
+        findings: findings || null,
+        conclusion: conclusion || null,
+        additionalNotes: additionalNotes || '',
+        status: 'COMPLETED'
+      };
+
+      const radiologyResult = existingResult
+        ? await prisma.radiologyResult.update({
+          where: { id: existingResult.id },
+          data: resultData
+        })
+        : await prisma.radiologyResult.create({
+          data: {
+            batchOrderId: orderId,
+            testTypeId: testTypeId,
+            ...resultData
+          }
+        });
 
       // Handle file attachments for this specific test
       if (attachments && attachments.length > 0) {
         for (const attachment of attachments) {
           // Create RadiologyResultFile record with the file path from the uploaded file
-          await prisma.radiologyResultFile.create({
-            data: {
+          const fileUrl = attachment.path || attachment.fileUrl || attachment;
+          const fileName = attachment.originalName || attachment.fileName || 'uploaded_file';
+          const fileType = attachment.type || attachment.fileType || 'image/png';
+
+          const existingFile = await prisma.radiologyResultFile.findFirst({
+            where: {
               resultId: radiologyResult.id,
-              fileUrl: attachment.path || attachment.fileUrl || attachment, // Support both path and fileUrl formats
-              fileName: attachment.originalName || attachment.fileName || 'uploaded_file',
-              fileType: attachment.type || attachment.fileType || 'image/png',
-              uploadedBy: radiologistId
+              fileUrl,
+              fileName
             }
           });
+
+          if (!existingFile) {
+            await prisma.radiologyResultFile.create({
+              data: {
+                resultId: radiologyResult.id,
+                fileUrl,
+                fileName,
+                fileType,
+                uploadedBy: radiologistId
+              }
+            });
+          }
         }
       }
 

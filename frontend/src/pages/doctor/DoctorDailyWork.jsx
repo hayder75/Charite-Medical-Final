@@ -31,7 +31,57 @@ const DoctorDailyWork = () => {
   const firstWeekday = useMemo(() => new Date(year, month, 1).getDay(), [year, month]);
   const selectedDaySummary = dayDetails?.summary || null;
   const selectedVisits = dayDetails?.visits || [];
-  const paymentsOnDate = dayDetails?.paymentsOnDate || [];
+
+  const monthlySummaryItems = useMemo(() => {
+    if (!monthlySummary) return [];
+
+    return [
+      { label: 'Visits', value: monthlySummary.visits || 0, tone: 'bg-slate-50 border-slate-200 text-slate-800' },
+      { label: 'Billed (Visit Date)', value: formatCurrency(monthlySummary.billedAmount || 0), tone: 'bg-blue-50 border-blue-200 text-blue-900' },
+      { label: 'Paid (Visit Date)', value: formatCurrency(monthlySummary.paidAmountByVisitDate || 0), tone: 'bg-emerald-50 border-emerald-200 text-emerald-900' },
+      { label: 'Collected (Payment Date)', value: formatCurrency(monthlySummary.collectedAmountByPaymentDate || 0), tone: 'bg-amber-50 border-amber-200 text-amber-900' },
+      { label: 'Bank Collected', value: formatCurrency(monthlySummary.bankCollectedByPaymentDate || 0), tone: 'bg-violet-50 border-violet-200 text-violet-900' },
+      { label: 'Charity Collected', value: formatCurrency(monthlySummary.charityCollectedByPaymentDate || 0), tone: 'bg-rose-50 border-rose-200 text-rose-900' },
+    ];
+  }, [monthlySummary]);
+
+  const groupedSelectedVisits = useMemo(() => {
+    const groupedMap = new Map();
+
+    selectedVisits.forEach((visit, index) => {
+      const groupKey = String(visit.patientId || visit.patientName || visit.visitId || `unknown-${index}`);
+
+      if (!groupedMap.has(groupKey)) {
+        groupedMap.set(groupKey, {
+          groupKey,
+          patientName: visit.patientName || 'Unknown Patient',
+          patientId: visit.patientId || 'N/A',
+          visitRefs: [],
+          patientGender: visit.patientGender || 'N/A',
+          patientAge: visit.patientAge ?? 'N/A',
+          billedAmount: 0,
+          paidAmountByVisitDate: 0,
+          services: [],
+        });
+      }
+
+      const current = groupedMap.get(groupKey);
+      const visitRef = visit.visitUid || visit.visitId || 'N/A';
+
+      if (!current.visitRefs.includes(visitRef)) {
+        current.visitRefs.push(visitRef);
+      }
+
+      current.billedAmount += Number(visit.billedAmount || 0);
+      current.paidAmountByVisitDate += Number(visit.paidAmountByVisitDate || 0);
+
+      if (Array.isArray(visit.services) && visit.services.length > 0) {
+        current.services.push(...visit.services);
+      }
+    });
+
+    return Array.from(groupedMap.values());
+  }, [selectedVisits]);
 
   const fetchMonthly = async () => {
     try {
@@ -167,18 +217,6 @@ const DoctorDailyWork = () => {
         }).join('')
       : '<p class="empty-state">No patient visits recorded for this day.</p>';
 
-    const paymentRows = paymentsOnDate.length > 0
-      ? paymentsOnDate.map((payment) => `
-          <tr>
-            <td>${payment.patientName || 'Unknown Patient'}</td>
-            <td>${payment.paymentType || 'N/A'}</td>
-            <td>${payment.bankName || '-'}</td>
-            <td>${payment.transNumber || '-'}</td>
-            <td>${formatCurrency(payment.relevantAmount || 0)}</td>
-          </tr>
-        `).join('')
-      : '<tr><td colspan="5">No collections on this date.</td></tr>';
-
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
@@ -225,19 +263,6 @@ const DoctorDailyWork = () => {
             ${summaryHtml}
             <h2 class="section-title">Patient Visit Breakdown</h2>
             ${visitBlocks}
-            <h2 class="section-title">Collections On Payment Date</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Patient</th>
-                  <th>Payment Type</th>
-                  <th>Bank</th>
-                  <th>Reference</th>
-                  <th>Relevant Amount</th>
-                </tr>
-              </thead>
-              <tbody>${paymentRows}</tbody>
-            </table>
           </div>
           <script>window.print();</script>
         </body>
@@ -268,78 +293,73 @@ const DoctorDailyWork = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-5">
-            <button className="btn btn-outline btn-sm" type="button" onClick={() => moveMonth('prev')}>
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <div className="text-center">
-              <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-lg font-semibold text-slate-900">
-                <Calendar className="h-5 w-5 text-blue-600" /> {monthName} {year}
-              </div>
-              <p className="mt-2 text-xs text-slate-500">Click a date to open patient-by-patient service details.</p>
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-5">
+          <button className="btn btn-outline btn-sm" type="button" onClick={() => moveMonth('prev')}>
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="text-center">
+            <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-lg font-semibold text-slate-900">
+              <Calendar className="h-5 w-5 text-blue-600" /> {monthName} {year}
             </div>
-            <button className="btn btn-outline btn-sm" type="button" onClick={() => moveMonth('next')}>
-              <ChevronRight className="h-4 w-4" />
-            </button>
+            <p className="mt-2 text-xs text-slate-500">Click a date to open patient-by-patient service details.</p>
           </div>
-
-          <div className="grid grid-cols-7 gap-2 mb-2">
-            {WEEKDAY_LABELS.map((label) => (
-              <div key={label} className="rounded-xl bg-slate-100 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">
-                {label}
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 gap-2">
-            {calendarCells.map((cell) => {
-              if (cell.kind === 'empty') {
-                return <div key={cell.id} className="min-h-[105px] rounded-2xl border border-dashed border-slate-100 bg-slate-50/40" />;
-              }
-
-              const isSelected = cell.date === selectedDate;
-              const hasActivity = cell.visits > 0 || cell.billedAmount > 0 || cell.collectedAmountByPaymentDate > 0;
-
-              return (
-                <button
-                  key={cell.date}
-                  type="button"
-                  onClick={() => setSelectedDate(cell.date)}
-                  className={`min-h-[105px] rounded-2xl border p-3 text-left transition-all ${isSelected
-                    ? 'border-blue-500 bg-blue-600 text-white shadow-lg shadow-blue-200'
-                    : hasActivity
-                      ? 'border-blue-200 bg-gradient-to-br from-white to-blue-50 hover:border-blue-400 hover:shadow-md'
-                      : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                >
-                  <div className={`text-xs font-semibold ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>Day {cell.day}</div>
-                  <div className={`mt-2 text-lg font-bold ${isSelected ? 'text-white' : 'text-slate-900'}`}>{cell.visits}</div>
-                  <div className={`text-[11px] ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>visits</div>
-                  <div className={`mt-3 text-[11px] ${isSelected ? 'text-blue-50' : 'text-slate-600'}`}>Billed: {formatCurrency(cell.billedAmount || 0)}</div>
-                  <div className={`mt-1 text-[11px] ${isSelected ? 'text-blue-50' : 'text-slate-600'}`}>Collected: {formatCurrency(cell.collectedAmountByPaymentDate || 0)}</div>
-                </button>
-              );
-            })}
-          </div>
+          <button className="btn btn-outline btn-sm" type="button" onClick={() => moveMonth('next')}>
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
 
-        <div className="space-y-4">
-          {monthlySummary && [
-            { label: 'Visits', value: monthlySummary.visits || 0, tone: 'bg-slate-50 border-slate-200' },
-            { label: 'Billed (Visit Date)', value: formatCurrency(monthlySummary.billedAmount || 0), tone: 'bg-blue-50 border-blue-200' },
-            { label: 'Paid (Visit Date)', value: formatCurrency(monthlySummary.paidAmountByVisitDate || 0), tone: 'bg-emerald-50 border-emerald-200' },
-            { label: 'Collected (Payment Date)', value: formatCurrency(monthlySummary.collectedAmountByPaymentDate || 0), tone: 'bg-amber-50 border-amber-200' },
-            { label: 'Bank Collected', value: formatCurrency(monthlySummary.bankCollectedByPaymentDate || 0), tone: 'bg-violet-50 border-violet-200' },
-            { label: 'Charity Collected', value: formatCurrency(monthlySummary.charityCollectedByPaymentDate || 0), tone: 'bg-rose-50 border-rose-200' },
-          ].map((item) => (
-            <div key={item.label} className={`rounded-2xl border p-4 ${item.tone}`}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</p>
-              <p className="mt-2 text-2xl font-bold text-slate-900">{item.value}</p>
+        <div className="grid grid-cols-7 gap-2 mb-2">
+          {WEEKDAY_LABELS.map((label) => (
+            <div key={label} className="rounded-xl bg-slate-100 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">
+              {label}
             </div>
           ))}
         </div>
+
+        <div className="grid grid-cols-7 gap-2">
+          {calendarCells.map((cell) => {
+            if (cell.kind === 'empty') {
+              return <div key={cell.id} className="min-h-[105px] rounded-2xl border border-dashed border-slate-100 bg-slate-50/40" />;
+            }
+
+            const isSelected = cell.date === selectedDate;
+            const hasActivity = cell.visits > 0 || cell.billedAmount > 0 || cell.collectedAmountByPaymentDate > 0;
+
+            return (
+              <button
+                key={cell.date}
+                type="button"
+                onClick={() => setSelectedDate(cell.date)}
+                className={`min-h-[105px] rounded-2xl border p-3 text-left transition-all ${isSelected
+                  ? 'border-blue-500 bg-blue-600 text-white shadow-lg shadow-blue-200'
+                  : hasActivity
+                    ? 'border-blue-200 bg-gradient-to-br from-white to-blue-50 hover:border-blue-400 hover:shadow-md'
+                    : 'border-slate-200 bg-white hover:border-slate-300'}`}
+              >
+                <div className={`text-xs font-semibold ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>Day {cell.day}</div>
+                <div className={`mt-2 text-lg font-bold ${isSelected ? 'text-white' : 'text-slate-900'}`}>{cell.visits}</div>
+                <div className={`text-[11px] ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>visits</div>
+                <div className={`mt-3 text-[11px] ${isSelected ? 'text-blue-50' : 'text-slate-600'}`}>Billed: {formatCurrency(cell.billedAmount || 0)}</div>
+                <div className={`mt-1 text-[11px] ${isSelected ? 'text-blue-50' : 'text-slate-600'}`}>Collected: {formatCurrency(cell.collectedAmountByPaymentDate || 0)}</div>
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      {monthlySummaryItems.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+            {monthlySummaryItems.map((item) => (
+              <div key={item.label} className={`rounded-xl border px-3 py-2 ${item.tone}`}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{item.label}</p>
+                <p className="mt-1 text-sm md:text-base font-bold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between mb-5">
@@ -381,29 +401,29 @@ const DoctorDailyWork = () => {
           </div>
         ) : (
           <div className="space-y-5">
-            {selectedVisits.length === 0 ? (
+            {groupedSelectedVisits.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
                 No patient visits recorded for this date.
               </div>
             ) : (
-              selectedVisits.map((visit, index) => (
-                <div key={visit.visitId} className="overflow-hidden rounded-3xl border border-blue-100 bg-gradient-to-br from-white to-slate-50 shadow-sm">
+              groupedSelectedVisits.map((visit, index) => (
+                <div key={visit.groupKey} className="overflow-hidden rounded-3xl border border-blue-100 bg-gradient-to-br from-white to-slate-50 shadow-sm">
                   <div className="border-b border-blue-100 bg-blue-50/70 px-5 py-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">Patient {index + 1}</p>
-                      <h4 className="mt-1 text-xl font-bold text-slate-900">{visit.patientName || 'Unknown Patient'}</h4>
+                      <h4 className="mt-1 text-xl font-bold text-slate-900">{visit.patientName}</h4>
                       <p className="mt-1 text-sm text-slate-600">
-                        ID: {visit.patientId || 'N/A'} | Visit: {visit.visitUid || visit.visitId || 'N/A'} | Gender: {visit.patientGender || 'N/A'} | Age: {visit.patientAge ?? 'N/A'}
+                        ID: {visit.patientId} | Visits: {visit.visitRefs.join(', ')} | Gender: {visit.patientGender} | Age: {visit.patientAge}
                       </p>
                     </div>
                     <div className="grid grid-cols-2 gap-3 min-w-[260px]">
                       <div className="rounded-2xl border border-white bg-white px-4 py-3">
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Billed</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(visit.billedAmount || 0)}</p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Total Billed</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(visit.billedAmount)}</p>
                       </div>
                       <div className="rounded-2xl border border-white bg-white px-4 py-3">
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Paid</p>
-                        <p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(visit.paidAmountByVisitDate || 0)}</p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Total Paid</p>
+                        <p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(visit.paidAmountByVisitDate)}</p>
                       </div>
                     </div>
                   </div>
@@ -416,16 +436,16 @@ const DoctorDailyWork = () => {
 
                     {(visit.services || []).length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-                        No services found for this visit.
+                        No services found for this patient.
                       </div>
                     ) : (
                       <div className="space-y-3">
                         {(visit.services || []).map((service, serviceIndex) => (
-                          <div key={`${visit.visitId}-${service.billingId}-${serviceIndex}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div key={`${visit.groupKey}-${service.billingId || serviceIndex}-${serviceIndex}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                             <div>
                               <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">{formatCategory(service.category)}</p>
                               <p className="mt-1 text-base font-semibold text-slate-900">{service.serviceName || 'Service'}</p>
-                              <p className="mt-1 text-xs text-slate-500">Billing: {service.billingId}</p>
+                              <p className="mt-1 text-xs text-slate-500">Billing: {service.billingId || '-'}</p>
                             </div>
                             <div className="grid grid-cols-3 gap-3 text-sm min-w-[280px]">
                               <div className="rounded-xl bg-slate-50 px-3 py-2">
@@ -449,40 +469,6 @@ const DoctorDailyWork = () => {
                 </div>
               ))
             )}
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <h4 className="text-lg font-bold text-slate-900">Collections On Payment Date</h4>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-left text-slate-500">
-                      <th className="py-3 pr-4 font-semibold">Patient</th>
-                      <th className="py-3 pr-4 font-semibold">Type</th>
-                      <th className="py-3 pr-4 font-semibold">Bank</th>
-                      <th className="py-3 pr-4 font-semibold">Reference</th>
-                      <th className="py-3 pr-4 font-semibold text-right">Relevant Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paymentsOnDate.length === 0 ? (
-                      <tr>
-                        <td className="py-4 text-slate-500" colSpan="5">No collections on this date.</td>
-                      </tr>
-                    ) : (
-                      paymentsOnDate.map((payment) => (
-                        <tr key={payment.paymentId} className="border-b border-slate-200/70">
-                          <td className="py-3 pr-4 text-slate-900">{payment.patientName || '-'}</td>
-                          <td className="py-3 pr-4 text-slate-700">{payment.paymentType || '-'}</td>
-                          <td className="py-3 pr-4 text-slate-700">{payment.bankName || '-'}</td>
-                          <td className="py-3 pr-4 text-slate-700">{payment.transNumber || '-'}</td>
-                          <td className="py-3 pr-4 text-right font-semibold text-slate-900">{formatCurrency(payment.relevantAmount || 0)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
         )}
       </div>

@@ -22,8 +22,8 @@ router.get('/patient/:patientId', accountController.getAccountByPatientId);
 // Get patient credit summary for doctor ordering (for showing credit warning)
 router.get('/patient/:patientId/credit-summary', accountController.getPatientCreditSummary);
 
-// Create or update account (Admin only - auto-approved)
-router.post('/', roleGuard(['ADMIN']), accountController.createAccount);
+// Create or update account (Admin and Billing Officers - auto-approved)
+router.post('/', roleGuard(['ADMIN', 'BILLING_OFFICER']), accountController.createAccount);
 
 // Add deposit (Admin and Billing Officers)
 router.post('/deposit', roleGuard(['ADMIN', 'BILLING_OFFICER']), accountController.addDeposit);
@@ -33,6 +33,9 @@ router.post('/payment', roleGuard(['ADMIN', 'BILLING_OFFICER', 'RECEPTION']), ac
 
 // Adjust balance (Admin only)
 router.post('/adjust', roleGuard(['ADMIN']), accountController.adjustBalance);
+
+// Delete account (Admin only)
+router.delete('/:accountId', roleGuard(['ADMIN']), accountController.deleteAccount);
 
 // Verify account (Admin only)
 router.post('/verify/:accountId', roleGuard(['ADMIN']), accountController.verifyAccount);
@@ -44,14 +47,14 @@ router.post('/reject/:accountId', roleGuard(['ADMIN']), accountController.reject
 // Create request (Admin only - for backward compatibility, but admin should use direct creation)
 router.post('/requests', roleGuard(['ADMIN']), accountController.createAccountRequest);
 
-// Get requests by status (Admin only)
-router.get('/requests', roleGuard(['ADMIN']), accountController.getPendingRequests);
+// Get requests by status (Admin and Billing for pending advance deposits)
+router.get('/requests', roleGuard(['ADMIN', 'BILLING_OFFICER']), accountController.getPendingRequests);
 
-// Approve request (Admin only)
-router.post('/requests/:requestId/approve', roleGuard(['ADMIN']), accountController.approveRequest);
+// Approve request (Admin and Billing for pending advance deposits)
+router.post('/requests/:requestId/approve', roleGuard(['ADMIN', 'BILLING_OFFICER']), accountController.approveRequest);
 
-// Reject request (Admin only)
-router.post('/requests/:requestId/reject', roleGuard(['ADMIN']), accountController.rejectRequest);
+// Reject request (Admin and Billing for pending advance deposits)
+router.post('/requests/:requestId/reject', roleGuard(['ADMIN', 'BILLING_OFFICER']), accountController.rejectRequest);
 
 module.exports = router;
 

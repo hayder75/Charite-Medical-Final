@@ -1,5 +1,6 @@
 const express = require('express');
 const doctorController = require('../controllers/doctorController');
+const batchOrderController = require('../controllers/batchOrderController');
 const adminController = require('../controllers/adminController');
 const prisma = require('../config/database');
 const { getDoctorWorkspaceConfig, resolveDoctorWorkspaceProfile } = require('../controllers/systemSettingsController');
@@ -202,6 +203,7 @@ router.get('/patient-history/:patientId', auth, roleGuard(['DOCTOR', 'BILLING_OF
 router.get('/patient-history/:patientId/visit/:visitId/pdf', doctorController.generateVisitHistoryPDF);
 router.get('/vitals/:visitId', doctorController.getPatientVitals);
 router.get('/order-status/:visitId', doctorController.getVisitOrderStatus);
+router.post('/visits/:visitId/external-diagnostic-orders', auth, roleGuard(DOCTOR_ROLES), doctorController.createExternalDiagnosticOrder);
 router.get('/investigation-types', doctorController.getInvestigationTypes);
 router.get('/services', doctorController.getAllServices);
 router.get('/lab-tests/for-ordering', auth, roleGuard(['DOCTOR', 'LAB_TECHNICIAN', 'ADMIN', 'HEALTH_OFFICER', 'DERMATOLOGY']), adminController.getLabTestsForOrdering);
@@ -226,5 +228,10 @@ router.post('/direct-complete', doctorController.directCompleteVisit);
 
 router.patch('/medication-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.updateMedicationOrder);
 router.delete('/medication-order/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.deleteMedicationOrder);
+router.delete('/lab-batch-order/:id', auth, roleGuard(DOCTOR_ROLES), batchOrderController.deleteLabBatchOrder);
+router.delete('/lab-test-order/:id', auth, roleGuard(DOCTOR_ROLES), batchOrderController.deleteLabTestOrder);
+router.delete('/radiology-batch-order/:id', auth, roleGuard(DOCTOR_ROLES), batchOrderController.deleteRadiologyBatchOrder);
+router.patch('/external-diagnostic-orders/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.updateExternalDiagnosticOrder);
+router.delete('/external-diagnostic-orders/:id', auth, roleGuard(DOCTOR_ROLES), doctorController.deleteExternalDiagnosticOrder);
 
 module.exports = router;

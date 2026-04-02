@@ -3072,7 +3072,7 @@ exports.deleteBillingService = async (req, res) => {
             where: {
               visitId,
               typeId: { in: itIds },
-              status: 'UNPAID'
+              status: { in: ['UNPAID', 'PAID', 'QUEUED'] }
             }
           });
 
@@ -3080,19 +3080,10 @@ exports.deleteBillingService = async (req, res) => {
             where: {
               visitId,
               typeId: { in: itIds },
-              status: 'UNPAID'
+              status: { in: ['UNPAID', 'PAID', 'QUEUED'] }
             }
           });
 
-          await tx.labTestOrder.deleteMany({
-            where: {
-              visitId,
-              labTest: {
-                investigationTypeId: { in: itIds }
-              },
-              status: 'UNPAID'
-            }
-          });
         }
 
         // E. Also check for LabTestOrders linked directly via LabTest.serviceId
@@ -3107,7 +3098,7 @@ exports.deleteBillingService = async (req, res) => {
             where: {
               visitId,
               labTestId: { in: labTestIds },
-              status: 'UNPAID'
+              status: { in: ['UNPAID', 'PAID', 'QUEUED'] }
             }
           });
         }

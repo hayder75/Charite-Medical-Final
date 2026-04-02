@@ -13,6 +13,7 @@ const DEFAULT_MEDICATION = {
   unitPrice: 0,
   instructions: '',
   dosageForm: 'Tablet',
+  dosage: '',
   frequency: '',
   frequencyPeriod: '',
   duration: '',
@@ -40,6 +41,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
     unitPrice: '',
     instructions: '',
     dosageForm: 'Tablet',
+    dosage: '',
     frequency: '',
     frequencyPeriod: '',
     duration: '',
@@ -135,6 +137,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
         unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : 5,
         instructions: customMedication.instructions || '',
         dosageForm: customMedication.dosageForm || 'Tablet',
+        dosage: customMedication.dosage || '',
         frequency: customMedication.frequency || '',
         frequencyPeriod: customMedication.frequencyPeriod || '',
         duration: customMedication.duration || '',
@@ -150,6 +153,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
       unitPrice: '',
       instructions: '',
       dosageForm: 'Tablet',
+      dosage: '',
       frequency: '',
       frequencyPeriod: '',
       duration: '',
@@ -197,6 +201,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
           quantity: Number(med.quantity) || 1,
           instructions: med.instructions || '',
           dosageForm: med.dosageForm || null,
+          dosage: med.dosage || null,
           strength: med.strength || null,
           frequency: med.frequency || null,
           frequencyPeriod: med.frequencyPeriod || null,
@@ -550,7 +555,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <div>
                 <label className="block text-xs font-bold text-indigo-900 mb-1">Quantity</label>
                 <input
@@ -568,7 +573,17 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                   value={customMedication.frequency}
                   onChange={(e) => setCustomMedication({ ...customMedication, frequency: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                  placeholder="e.g. 2"
+                  placeholder="e.g. BID"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 mb-1">Dosage</label>
+                <input
+                  type="text"
+                  value={customMedication.dosage}
+                  onChange={(e) => setCustomMedication({ ...customMedication, dosage: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
+                  placeholder="e.g. 10 ml"
                 />
               </div>
               <div>
@@ -578,7 +593,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                   value={customMedication.duration}
                   onChange={(e) => setCustomMedication({ ...customMedication, duration: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                  placeholder="e.g. 5"
+                  placeholder="e.g. 5 days"
                 />
               </div>
               <div>
@@ -588,13 +603,13 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                   value={customMedication.route}
                   onChange={(e) => setCustomMedication({ ...customMedication, route: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white"
-                  placeholder="e.g. PO"
+                  placeholder="e.g. IV"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-indigo-900 mb-1.5">Instructions (Quantity, Frequency, Duration, Route)</label>
+              <label className="block text-sm font-bold text-indigo-900 mb-1.5">Instructions (Quantity, Frequency, Dosage, Duration, Route)</label>
               <textarea
                 value={customMedication.instructions}
                 onChange={(e) => setCustomMedication({ ...customMedication, instructions: e.target.value })}
@@ -635,7 +650,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mt-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                   <input
@@ -653,7 +668,17 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                     value={medication.frequency}
                     onChange={(e) => updateMedication(index, 'frequency', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g. 2"
+                    placeholder="e.g. BID"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Dosage</label>
+                  <input
+                    type="text"
+                    value={medication.dosage || ''}
+                    onChange={(e) => updateMedication(index, 'dosage', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. 10 ml"
                   />
                 </div>
                 <div>
@@ -663,7 +688,7 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                     value={medication.duration}
                     onChange={(e) => updateMedication(index, 'duration', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g. 5"
+                    placeholder="e.g. 5 days"
                   />
                 </div>
                 <div>
@@ -673,13 +698,13 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                     value={medication.route}
                     onChange={(e) => updateMedication(index, 'route', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g. PO"
+                    placeholder="e.g. IV"
                   />
                 </div>
               </div>
 
               <div className="mt-3">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Dosage, Duration, Route)</label>
                 <textarea
                   value={medication.instructions}
                   onChange={(e) => updateMedication(index, 'instructions', e.target.value)}
@@ -814,8 +839,46 @@ const EmergencyDrugOrdering = ({ visit, onOrdersPlaced }) => {
                     />
                   </div>
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
+                    <input
+                      type="text"
+                      value={editingOrder.frequency || ''}
+                      onChange={(e) => setEditingOrder({ ...editingOrder, frequency: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Dosage</label>
+                    <input
+                      type="text"
+                      value={editingOrder.dosage || ''}
+                      onChange={(e) => setEditingOrder({ ...editingOrder, dosage: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
+                    <input
+                      type="text"
+                      value={editingOrder.duration || ''}
+                      onChange={(e) => setEditingOrder({ ...editingOrder, duration: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Route</label>
+                    <input
+                      type="text"
+                      value={editingOrder.route || ''}
+                      onChange={(e) => setEditingOrder({ ...editingOrder, route: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Duration, Route)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Instructions (Quantity, Frequency, Dosage, Duration, Route)</label>
                   <textarea
                     value={editingOrder.instructions || ''}
                     onChange={(e) => setEditingOrder({ ...editingOrder, instructions: e.target.value })}

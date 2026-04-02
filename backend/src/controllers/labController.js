@@ -1120,6 +1120,24 @@ const saveLabTestResult = async (req, res) => {
     const labTechnicianId = req.user.id;
     const requestedFinalize = !(finalize === false || finalize === 'false');
 
+    const normalizeResultsObject = (value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+      }
+      return value;
+    };
+
+    const hasMeaningfulResults = (value) => {
+      const normalized = normalizeResultsObject(value);
+      return Object.values(normalized).some((item) => {
+        if (item === null || item === undefined) return false;
+        if (typeof item === 'string') return item.trim() !== '';
+        if (Array.isArray(item)) return item.length > 0;
+        if (typeof item === 'object') return Object.keys(item).length > 0;
+        return true;
+      });
+    };
+
     if (!orderId) {
       return res.status(400).json({ error: 'orderId is required' });
     }
@@ -1133,6 +1151,20 @@ const saveLabTestResult = async (req, res) => {
       where: { orderId_testId: { orderId, testId: order.labTestId } }
     });
 
+    const incomingResults = normalizeResultsObject(results);
+    const existingStoredResults = normalizeResultsObject(existingResult?.results);
+    const effectiveResults = hasMeaningfulResults(incomingResults)
+      ? incomingResults
+      : existingStoredResults;
+    const hasAnyResultData = hasMeaningfulResults(effectiveResults);
+    const hasAdditionalNotes = typeof additionalNotes === 'string' && additionalNotes.trim() !== '';
+
+    if (requestedFinalize && !hasAnyResultData && !hasAdditionalNotes) {
+      return res.status(400).json({
+        error: 'Cannot finalize lab test without result values. Please enter at least one test value or note.'
+      });
+    }
+
     const shouldFinalize = requestedFinalize || existingResult?.status === 'COMPLETED';
     const targetStatus = shouldFinalize ? 'COMPLETED' : 'IN_PROGRESS';
 
@@ -1141,7 +1173,7 @@ const saveLabTestResult = async (req, res) => {
       result = await prisma.labTestResult.update({
         where: { id: existingResult.id },
         data: {
-          results: results,
+          results: effectiveResults,
           additionalNotes: additionalNotes || null,
           processedBy: labTechnicianId,
           verifiedBy: shouldFinalize ? labTechnicianId : null,
@@ -1155,7 +1187,7 @@ const saveLabTestResult = async (req, res) => {
         data: {
           orderId: orderId,
           testId: order.labTestId,
-          results: results,
+          results: effectiveResults,
           additionalNotes: additionalNotes || null,
           processedBy: labTechnicianId,
           verifiedBy: shouldFinalize ? labTechnicianId : null,

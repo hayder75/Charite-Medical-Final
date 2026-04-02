@@ -12,6 +12,10 @@ build/
 .env
 **/.env
 .env.*
+!.env.example
+
+# Database backups
+DB backup/
 
 # OS/editor noise
 .DS_Store
@@ -31,7 +35,9 @@ pnpm-debug.log*
 
 # Runtime/generated data
 backend/uploads/
+uploads/
 backend/.cache/
 frontend/.cache/
 tmp/
 temp/
+*.bak

@@ -16,6 +16,7 @@ const DoctorAppointments = () => {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
+  const [showTodayOnly, setShowTodayOnly] = useState(true);
 
   useEffect(() => {
     fetchAppointments();
@@ -23,7 +24,7 @@ const DoctorAppointments = () => {
 
   useEffect(() => {
     filterAppointments();
-  }, [appointments, statusFilter, dateFilter, typeFilter]);
+  }, [appointments, statusFilter, dateFilter, typeFilter, showTodayOnly]);
 
   const fetchAppointments = async () => {
     try {
@@ -40,6 +41,15 @@ const DoctorAppointments = () => {
 
   const filterAppointments = () => {
     let filtered = [...appointments];
+
+    // Today only filter (default)
+    if (showTodayOnly) {
+      const today = new Date().toDateString();
+      filtered = filtered.filter((apt) => {
+        const aptDate = new Date(apt.appointmentDate).toDateString();
+        return aptDate === today;
+      });
+    }
 
     // Status filter
     if (statusFilter !== 'ALL') {
@@ -118,6 +128,7 @@ const DoctorAppointments = () => {
     setStatusFilter('ALL');
     setDateFilter('');
     setTypeFilter('ALL');
+    setShowTodayOnly(true);
   };
 
   const activeFilterCount = () => {
@@ -162,6 +173,29 @@ const DoctorAppointments = () => {
               <Plus className="h-5 w-5" />
               <span>Schedule Appointment</span>
             </button>
+          </div>
+        </div>
+
+        {/* Today Filter */}
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex items-center space-x-2 bg-white rounded-lg border p-3 w-fit" style={{ borderColor: '#E5E7EB' }}>
+            <input
+              type="checkbox"
+              id="doctorTodayOnly"
+              checked={showTodayOnly}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setShowTodayOnly(checked);
+                if (checked) {
+                  setDateFilter('');
+                }
+              }}
+              className="h-4 w-4"
+              style={{ accentColor: '#2e13d1' }}
+            />
+            <label htmlFor="doctorTodayOnly" className="text-sm font-medium" style={{ color: '#0C0E0B' }}>
+              Show Today Only
+            </label>
           </div>
         </div>
 
@@ -360,9 +394,15 @@ const DoctorAppointments = () => {
                     type="date"
                     value={dateFilter}
                     onChange={(e) => setDateFilter(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg"
+                    disabled={showTodayOnly}
+                    className="w-full px-3 py-2 border rounded-lg disabled:bg-gray-100 disabled:text-gray-400"
                     style={{ borderColor: '#E5E7EB' }}
                   />
+                  {showTodayOnly && (
+                    <p className="mt-2 text-xs" style={{ color: '#6B7280' }}>
+                      Disable “Show Today Only” to filter by a custom date.
+                    </p>
+                  )}
                 </div>
 
                 <div>

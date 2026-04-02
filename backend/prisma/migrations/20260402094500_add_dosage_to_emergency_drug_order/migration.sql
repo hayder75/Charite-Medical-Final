@@ -1,0 +1,2 @@
+ALTER TABLE "EmergencyDrugOrder"
+ADD COLUMN IF NOT EXISTS "dosage" TEXT;

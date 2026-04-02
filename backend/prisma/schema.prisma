@@ -23,7 +23,6 @@ model User {
   waiveConsultationFee       Boolean                     @default(false)
   passwordChangedAt          DateTime?
   createdAt                  DateTime                    @default(now())
-  compoundPrescriptions      CompoundPrescription[]
   updatedAt                  DateTime                    @updatedAt
   accountDeposits            AccountDeposit[]
   accountRequestsCreated     AccountRequest[]            @relation("AccountRequestsCreated")
@@ -74,6 +73,8 @@ model User {
   internationalMedicalCertificates InternationalMedicalCertificate[]
   admissionsCreated          Admission[]                 @relation("AdmissionsCreated")
   admissionServicesOrdered   AdmissionService[]          @relation("AdmissionServicesOrdered")
+  compoundPrescriptions      CompoundPrescription[]
+  externalDiagnosticOrders   ExternalDiagnosticOrder[]
 
   @@index([role])
   @@index([availability])
@@ -188,8 +189,9 @@ model Patient {
   history                    MedicalHistory[]            @relation("PatientHistory")
   orders                     MedicationOrder[]
   nurseWalkInOrders          NurseWalkInOrder[]
-  compoundPrescriptions     CompoundPrescription[]
   doctorWalkInOrders         DoctorWalkInOrder[]
+  compoundPrescriptions      CompoundPrescription[]
+  externalDiagnosticOrders   ExternalDiagnosticOrder[]
   insurance                  Insurance?                  @relation(fields: [insuranceId], references: [id])
   patientAccount             PatientAccount?
   attachedImages             PatientAttachedImage[]
@@ -258,6 +260,7 @@ model Visit {
   nurseWalkInOrders              NurseWalkInOrder[]
   doctorWalkInOrders             DoctorWalkInOrder[]
   compoundPrescriptions         CompoundPrescription[]
+    externalDiagnosticOrders      ExternalDiagnosticOrder[]
 
   @@index([status])
   @@index([patientId])
@@ -711,6 +714,7 @@ model EmergencyDrugOrder {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   dosageForm      String?
+  dosage          String?
   duration        String?
   durationPeriod  String?
   frequency       String?
@@ -1023,6 +1027,27 @@ model BatchOrderService {
   detailedResults           DetailedLabResult[]
 
   @@unique([batchOrderId, serviceId])
+}
+
+model ExternalDiagnosticOrder {
+  id                   Int                         @id @default(autoincrement())
+  visitId              Int
+  patientId            String
+  doctorId             String
+  requestedByName      String
+  type                 ExternalDiagnosticOrderType
+  examinations         String[]
+  relevantClinicalData String?
+  diagnosis            String?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  doctor               User                        @relation(fields: [doctorId], references: [id])
+  patient              Patient                     @relation(fields: [patientId], references: [id])
+  visit                Visit                       @relation(fields: [visitId], references: [id])
+
+  @@index([visitId, type, createdAt])
+  @@index([patientId, type])
+  @@index([doctorId, createdAt])
 }
 
 model LabResult {
@@ -1946,6 +1971,11 @@ enum BatchOrderType {
   MIXED
   DENTAL
   PROCEDURE
+}
+
+enum ExternalDiagnosticOrderType {
+  LAB
+  RADIOLOGY
 }
 
 enum QueueType {

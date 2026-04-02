@@ -390,14 +390,24 @@ const PatientQueue = () => {
     try {
       // Submit lab orders if any
       if (selectedLabTests.length > 0) {
+        const selectedLabInvestigations = selectedLabTests
+          .map((testId) => labTestOptions.find((test) => test.id === testId))
+          .filter(Boolean);
+
+        if (selectedLabInvestigations.length !== selectedLabTests.length) {
+          toast.error('Some selected lab tests could not be matched to active billing services. Please refresh and try again.');
+          return;
+        }
+
         const batchOrderData = {
           visitId: selectedVisit.id,
           patientId: selectedVisit.patient.id,
           type: 'LAB',
           instructions: labInstructions || 'Lab tests ordered by doctor',
-          services: selectedLabTests.map(testId => ({
-            serviceId: testId.toString(),
-            instructions: labInstructions || `Lab test: ${testId}`
+          services: selectedLabInvestigations.map((test) => ({
+            serviceId: String(test.serviceId || test.service?.id || ''),
+            investigationTypeId: test.id,
+            instructions: labInstructions || `Lab test: ${test.name}`
           }))
         };
 
@@ -409,14 +419,24 @@ const PatientQueue = () => {
 
       // Submit radiology orders if any
       if (selectedRadiologyTests.length > 0) {
+        const selectedRadiologyInvestigations = selectedRadiologyTests
+          .map((testId) => radiologyTestOptions.find((test) => test.id === testId))
+          .filter(Boolean);
+
+        if (selectedRadiologyInvestigations.length !== selectedRadiologyTests.length) {
+          toast.error('Some selected radiology tests could not be matched to active billing services. Please refresh and try again.');
+          return;
+        }
+
         const batchOrderData = {
           visitId: selectedVisit.id,
           patientId: selectedVisit.patient.id,
           type: 'RADIOLOGY',
           instructions: radiologyInstructions || 'Radiology tests ordered by doctor',
-          services: selectedRadiologyTests.map(testId => ({
-            serviceId: testId.toString(),
-            instructions: radiologyInstructions || `Radiology test: ${testId}`
+          services: selectedRadiologyInvestigations.map((test) => ({
+            serviceId: String(test.serviceId || test.service?.id || ''),
+            investigationTypeId: test.id,
+            instructions: radiologyInstructions || `Radiology test: ${test.name}`
           }))
         };
 

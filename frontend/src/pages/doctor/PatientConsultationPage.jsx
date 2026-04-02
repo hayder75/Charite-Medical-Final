@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Beaker, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown } from 'lucide-react';
+import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Beaker, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react';
 import { getImageUrl } from '../../utils/imageUrl';
 import { checkValueInNormalRange } from '../../utils/normalRangeParser';
 import DentalChart from '../../components/dental/DentalChart';
@@ -14,6 +14,7 @@ import DoctorServiceOrdering from '../../components/doctor/DoctorServiceOrdering
 import NurseServiceOrderingInterface from '../../components/doctor/NurseServiceOrderingInterface';
 import LabOrdering from '../../components/doctor/LabOrdering';
 import RadiologyOrdering from '../../components/doctor/RadiologyOrdering';
+import ExternalDiagnosticOrders from '../../components/doctor/ExternalDiagnosticOrders';
 import MedicationOrdering from '../../components/doctor/MedicationOrdering';
 import DentalServiceOrdering from '../../components/doctor/DentalServiceOrdering';
 import EmergencyDrugOrdering from '../../components/doctor/EmergencyDrugOrdering';
@@ -238,6 +239,7 @@ const PatientConsultationPage = () => {
       : 'active';
   const isCompletedMode = consultationMode === 'completed';
   const [loading, setLoading] = useState(true);
+  const [isRefreshingVisit, setIsRefreshingVisit] = useState(false);
   const [visit, setVisit] = useState(null);
   const [allVitals, setAllVitals] = useState([]); // All vitals for this visit
   const [activeTab, setActiveTab] = useState('vitals');
@@ -342,12 +344,247 @@ const PatientConsultationPage = () => {
     return qualifications.join(', ') || 'General Practitioner';
   };
 
+  const calculateAge = (dob) => {
+    if (!dob) return 'N/A';
+    const birthDate = new Date(dob);
+    if (Number.isNaN(birthDate.getTime())) return 'N/A';
+
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDifference = today.getMonth() - birthDate.getMonth();
+    if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
+      age -= 1;
+    }
+
+    return age >= 0 ? age : 'N/A';
+  };
+
+  const getPatientAgeLabel = (patientData) => {
+    const directAge = patientData?.age ?? patientData?.patientAge;
+    if (directAge !== undefined && directAge !== null && String(directAge).trim() !== '') {
+      return String(directAge).trim();
+    }
+
+    const dob = patientData?.dob || patientData?.dateOfBirth || patientData?.birthDate;
+    return calculateAge(dob);
+  };
+
   const escapeHtml = (value) => String(value || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+  const normalizeResultKey = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+  const parseStructuredResultObject = (value) => {
+    if (!value) return null;
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      if (value.results && typeof value.results === 'object' && !Array.isArray(value.results)) {
+        return value.results;
+      }
+      if (value.data && typeof value.data === 'object' && !Array.isArray(value.data)) {
+        return value.data;
+      }
+      return value;
+    }
+    if (Array.isArray(value)) {
+      const mapped = value.reduce((acc, item) => {
+        if (!item || typeof item !== 'object') return acc;
+        const key = item.fieldName || item.testName || item.name || item.label;
+        const itemValue = item.value ?? item.result;
+        if (!key || !hasDisplayableResultValue(itemValue)) return acc;
+        acc[key] = itemValue;
+        return acc;
+      }, {});
+      return Object.keys(mapped).length > 0 ? mapped : null;
+    }
+    if (typeof value !== 'string') return null;
+
+    try {
+      const parsed = JSON.parse(value);
+      return parseStructuredResultObject(parsed);
+    } catch {
+      return null;
+    }
+  };
+
+  const hasDisplayableResultValue = (value) => {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'string') return value.trim() !== '';
+    return true;
+  };
+
+  const stringifyResultValue = (value) => {
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) return value.filter(Boolean).join(', ');
+    if (typeof value === 'object') {
+      return Object.values(value).filter(hasDisplayableResultValue).join(', ');
+    }
+    return String(value);
+  };
+
+  const humanizeResultKey = (value) => String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
+
+  const getResultObjectValue = (resultObject, ...keys) => {
+    const source = parseStructuredResultObject(resultObject);
+    if (!source) return undefined;
+
+    for (const key of keys.filter(Boolean)) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        return source[key];
+      }
+    }
+
+    const normalizedCandidates = keys.filter(Boolean).map(normalizeResultKey).filter(Boolean);
+    if (!normalizedCandidates.length) return undefined;
+
+    const matchingEntry = Object.entries(source).find(([entryKey]) => {
+      const normalizedEntryKey = normalizeResultKey(entryKey);
+      return normalizedCandidates.includes(normalizedEntryKey);
+    });
+
+    return matchingEntry ? matchingEntry[1] : undefined;
+  };
+
+  const getBatchDetailedLabResults = (batchOrder) => {
+    if (Array.isArray(batchOrder?.detailedResults) && batchOrder.detailedResults.length > 0) {
+      return batchOrder.detailedResults;
+    }
+
+    if (Array.isArray(batchOrder?.detailedLabResults) && batchOrder.detailedLabResults.length > 0) {
+      return batchOrder.detailedLabResults;
+    }
+
+    return [];
+  };
+
+  const buildDetailedLabResultEntries = (detailedResult) => {
+    const resultObject = parseStructuredResultObject(detailedResult?.results)
+      || parseStructuredResultObject(detailedResult?.resultText);
+
+    if (!resultObject) return [];
+
+    const templateFields = detailedResult?.template?.fields;
+    if (templateFields && typeof templateFields === 'object' && !Array.isArray(templateFields)) {
+      const mappedEntries = Object.entries(templateFields)
+        .map(([fieldName, fieldConfig]) => {
+          const fieldLabel = fieldConfig?.label || humanizeResultKey(fieldName);
+          const rawValue = getResultObjectValue(resultObject, fieldName, fieldLabel);
+          if (!hasDisplayableResultValue(rawValue)) return null;
+
+          return {
+            key: fieldName,
+            label: fieldLabel,
+            value: stringifyResultValue(rawValue),
+            unit: fieldConfig?.unit || '',
+            referenceRange: fieldConfig?.referenceRange || fieldConfig?.normalRange || ''
+          };
+        })
+        .filter(Boolean);
+
+      if (mappedEntries.length > 0) {
+        return mappedEntries;
+      }
+    }
+
+    return Object.entries(resultObject)
+      .filter(([, value]) => hasDisplayableResultValue(value))
+      .map(([fieldName, value]) => ({
+        key: fieldName,
+        label: humanizeResultKey(fieldName),
+        value: stringifyResultValue(value),
+        unit: '',
+        referenceRange: ''
+      }));
+  };
+
+  const buildLegacyLabResultEntries = (labResult) => {
+    if (Array.isArray(labResult?.detailedResults) && labResult.detailedResults.length > 0) {
+      return labResult.detailedResults
+        .filter((item) => hasDisplayableResultValue(item?.result))
+        .map((item, index) => ({
+          key: item?.testName || `field-${index}`,
+          label: item?.testName || `Field ${index + 1}`,
+          value: stringifyResultValue(item?.result),
+          unit: item?.unit || '',
+          referenceRange: item?.referenceRange || ''
+        }));
+    }
+
+    const parsedResultObject = parseStructuredResultObject(labResult?.resultText);
+    if (!parsedResultObject) return [];
+
+    return Object.entries(parsedResultObject)
+      .filter(([, value]) => hasDisplayableResultValue(value))
+      .map(([fieldName, value]) => ({
+        key: fieldName,
+        label: humanizeResultKey(fieldName),
+        value: stringifyResultValue(value),
+        unit: '',
+        referenceRange: ''
+      }));
+  };
+
+  const getStructuredFieldValue = (resultObject, field) => {
+    const value = getResultObjectValue(
+      resultObject,
+      field?.fieldName,
+      field?.label,
+      String(field?.label || '').replace(/\s+/g, '_').toLowerCase(),
+      String(field?.label || '').replace(/\s+/g, '')
+    );
+
+    return hasDisplayableResultValue(value) ? value : undefined;
+  };
+
+  const buildLabTestOrderResultEntries = (order, latestResult) => {
+    const resultObject = parseStructuredResultObject(latestResult?.results);
+    if (!resultObject) return [];
+
+    const resultFields = Array.isArray(order?.labTest?.resultFields)
+      ? order.labTest.resultFields
+      : [];
+
+    const mappedEntries = resultFields
+      .map((field) => {
+        const rawValue = getStructuredFieldValue(resultObject, field);
+        if (rawValue === undefined) return null;
+
+        return {
+          key: field.id || field.fieldName || field.label,
+          label: field.label || humanizeResultKey(field.fieldName),
+          value: rawValue,
+          unit: field.unit || '',
+          referenceRange: field.normalRange || ''
+        };
+      })
+      .filter(Boolean);
+
+    if (mappedEntries.length > 0) {
+      return mappedEntries;
+    }
+
+    return Object.entries(resultObject)
+      .filter(([, value]) => hasDisplayableResultValue(value))
+      .map(([fieldName, value]) => ({
+        key: fieldName,
+        label: humanizeResultKey(fieldName),
+        value,
+        unit: '',
+        referenceRange: ''
+      }));
+  };
 
   const doctorCacheScope = useMemo(
     () => currentUser?.id || currentUser?.userId || currentUser?.username || 'unknown',
@@ -510,10 +747,15 @@ const PatientConsultationPage = () => {
     }
   };
 
-  const fetchVisitData = async () => {
+  const fetchVisitData = async (options = {}) => {
+    const { silent = false } = options;
     try {
       console.debug('[Consultation] fetchVisitData called for visitId:', visitId);
-      setLoading(true);
+      if (silent) {
+        setIsRefreshingVisit(true);
+      } else {
+        setLoading(true);
+      }
 
       // Fetch visit details using dedicated endpoint
       const response = await api.get(`/doctors/visits/${visitId}`);
@@ -615,8 +857,16 @@ const PatientConsultationPage = () => {
         }
       }
     } finally {
-      setLoading(false);
+      if (silent) {
+        setIsRefreshingVisit(false);
+      } else {
+        setLoading(false);
+      }
     }
+  };
+
+  const handleManualRefresh = async () => {
+    await fetchVisitData({ silent: true });
   };
 
   const handleDentalChartSave = (savedRecord) => {
@@ -952,6 +1202,14 @@ const PatientConsultationPage = () => {
     return historyVisit?.doctor || visit?.doctor || currentUser || {};
   };
 
+  const getPrintablePatientData = (batchOrder) => {
+    return batchOrder?.patient || batchOrder?.visit?.patient || visit?.patient || {};
+  };
+
+  const getPrintableOrderDoctorData = (batchOrder) => {
+    return batchOrder?.doctor || batchOrder?.orderedBy || batchOrder?.visit?.doctor || visit?.doctor || currentUser || {};
+  };
+
   const getPrintableDoctorName = (doctorData) => {
     const rawName = String(
       doctorData?.fullname || doctorData?.fullName || doctorData?.name || currentUser?.fullname || currentUser?.username || ''
@@ -968,6 +1226,29 @@ const PatientConsultationPage = () => {
 
     if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
     return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
+  };
+
+  const getPrintableOrderDoctorName = (batchOrder) => {
+    const explicitName = String(
+      batchOrder?.orderedByName || batchOrder?.orderedByDoctorName || batchOrder?.doctorName || ''
+    ).trim();
+
+    if (explicitName) {
+      if (/^(dr|mr)\.?\s+/i.test(explicitName)) return explicitName;
+
+      const doctorData = getPrintableOrderDoctorData(batchOrder);
+      const role = String(doctorData?.role || '').toUpperCase();
+      const qualifications = Array.isArray(doctorData?.qualifications) ? doctorData.qualifications : [];
+      const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
+      const isHealthOfficer =
+        role.includes('HEALTH_OFFICER') ||
+        role === 'HO' ||
+        normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
+
+      return isHealthOfficer ? `Mr. ${explicitName}` : `Dr. ${explicitName}`;
+    }
+
+    return getPrintableDoctorName(getPrintableOrderDoctorData(batchOrder));
   };
 
   const printHistoryMedicationReprint = (historyVisit, printDate) => {
@@ -1059,7 +1340,7 @@ const PatientConsultationPage = () => {
     }
 
     const patientData = patientHistory?.patient || visit?.patient || {};
-  const doctorData = getPrintableDoctorData(historyVisit);
+    const doctorData = getPrintableDoctorData(historyVisit);
   const doctorName = getPrintableDoctorName(doctorData);
     const doctorQualification = getDoctorQualificationLabel(doctorData);
     const visitDate = new Date(historyVisit.createdAt || historyVisit.updatedAt || Date.now());
@@ -1124,12 +1405,12 @@ const PatientConsultationPage = () => {
   // Print Lab Orders (with or without results)
   const printLabOrders = (batchOrder) => {
     const printWindow = window.open('', '_blank');
-    const patient = visit?.patient || {};
+    const patient = getPrintablePatientData(batchOrder);
     const currentDate = new Date().toLocaleDateString();
-    const patientAge = patient?.age || (patient?.dob ? calculateAge(patient.dob) : 'N/A');
-    const orderingDoctor = getPrintableDoctorName(
-      batchOrder?.doctor || batchOrder?.orderedBy || getPrintableDoctorData()
-    );
+    const patientAge = getPatientAgeLabel(patient);
+    const orderingDoctorData = getPrintableOrderDoctorData(batchOrder);
+    const orderingDoctor = getPrintableOrderDoctorName(batchOrder);
+    const orderingDoctorQualification = getDoctorQualificationLabel(orderingDoctorData);
 
     // Get results if available
     const hasResults = (batchOrder.detailedResults && batchOrder.detailedResults.length > 0) ||
@@ -1139,7 +1420,7 @@ const PatientConsultationPage = () => {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Lab Order - ${patient.name || 'Patient'}</title>
+          <title>Lab Order - ${escapeHtml(patient.name || 'Patient')}</title>
           <style>
             @media print { @page { size: A4; margin: 10mm; } }
             body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 15px; color: #333; }
@@ -1168,13 +1449,14 @@ const PatientConsultationPage = () => {
           <div class="section">
             <div class="section-title">Patient Information</div>
             <div class="info-grid">
-              <div><span class="info-label">Name:</span> ${patient.name || 'N/A'}</div>
-              <div><span class="info-label">ID:</span> ${patient.id || 'N/A'}</div>
-              <div><span class="info-label">Age:</span> ${patientAge}</div>
-              <div><span class="info-label">Gender:</span> ${patient.gender || 'N/A'}</div>
-              <div><span class="info-label">Ordered By:</span> ${orderingDoctor}</div>
-              <div><span class="info-label">Phone:</span> ${patient.mobile || 'N/A'}</div>
-              <div><span class="info-label">Date:</span> ${currentDate}</div>
+              <div><span class="info-label">Name:</span> ${escapeHtml(patient.name || 'N/A')}</div>
+              <div><span class="info-label">ID:</span> ${escapeHtml(patient.id || 'N/A')}</div>
+              <div><span class="info-label">Age:</span> ${escapeHtml(patientAge)}</div>
+              <div><span class="info-label">Gender:</span> ${escapeHtml(patient.gender || 'N/A')}</div>
+              <div><span class="info-label">Ordered By:</span> ${escapeHtml(orderingDoctor)}</div>
+              <div><span class="info-label">Role:</span> ${escapeHtml(orderingDoctorQualification)}</div>
+              <div><span class="info-label">Phone:</span> ${escapeHtml(patient.mobile || 'N/A')}</div>
+              <div><span class="info-label">Date:</span> ${escapeHtml(currentDate)}</div>
             </div>
           </div>
 
@@ -1235,12 +1517,12 @@ const PatientConsultationPage = () => {
   // Print Radiology Orders (with or without results)
   const printRadiologyOrders = (batchOrder) => {
     const printWindow = window.open('', '_blank');
-    const patient = visit?.patient || {};
+    const patient = getPrintablePatientData(batchOrder);
     const currentDate = new Date().toLocaleDateString();
-    const patientAge = patient?.age || (patient?.dob ? calculateAge(patient.dob) : 'N/A');
-    const orderingDoctor = getPrintableDoctorName(
-      batchOrder?.doctor || batchOrder?.orderedBy || getPrintableDoctorData()
-    );
+    const patientAge = getPatientAgeLabel(patient);
+    const orderingDoctorData = getPrintableOrderDoctorData(batchOrder);
+    const orderingDoctor = getPrintableOrderDoctorName(batchOrder);
+    const orderingDoctorQualification = getDoctorQualificationLabel(orderingDoctorData);
 
     const hasResults = batchOrder.radiologyResults && batchOrder.radiologyResults.length > 0;
 
@@ -1248,7 +1530,7 @@ const PatientConsultationPage = () => {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Radiology Order - ${patient.name || 'Patient'}</title>
+          <title>Radiology Order - ${escapeHtml(patient.name || 'Patient')}</title>
           <style>
             @media print { @page { size: A4; margin: 10mm; } }
             body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 15px; color: #333; }
@@ -1275,13 +1557,14 @@ const PatientConsultationPage = () => {
           <div class="section">
             <div class="section-title">Patient Information</div>
             <div class="info-grid">
-              <div><span class="info-label">Name:</span> ${patient.name || 'N/A'}</div>
-              <div><span class="info-label">ID:</span> ${patient.id || 'N/A'}</div>
-              <div><span class="info-label">Age:</span> ${patientAge}</div>
-              <div><span class="info-label">Gender:</span> ${patient.gender || 'N/A'}</div>
-              <div><span class="info-label">Ordered By:</span> ${orderingDoctor}</div>
-              <div><span class="info-label">Phone:</span> ${patient.mobile || 'N/A'}</div>
-              <div><span class="info-label">Date:</span> ${currentDate}</div>
+              <div><span class="info-label">Name:</span> ${escapeHtml(patient.name || 'N/A')}</div>
+              <div><span class="info-label">ID:</span> ${escapeHtml(patient.id || 'N/A')}</div>
+              <div><span class="info-label">Age:</span> ${escapeHtml(patientAge)}</div>
+              <div><span class="info-label">Gender:</span> ${escapeHtml(patient.gender || 'N/A')}</div>
+              <div><span class="info-label">Ordered By:</span> ${escapeHtml(orderingDoctor)}</div>
+              <div><span class="info-label">Role:</span> ${escapeHtml(orderingDoctorQualification)}</div>
+              <div><span class="info-label">Phone:</span> ${escapeHtml(patient.mobile || 'N/A')}</div>
+              <div><span class="info-label">Date:</span> ${escapeHtml(currentDate)}</div>
             </div>
           </div>
 
@@ -1459,6 +1742,21 @@ const PatientConsultationPage = () => {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={handleManualRefresh}
+                disabled={isRefreshingVisit}
+                className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center text-base whitespace-nowrap border"
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  color: '#2e13d1',
+                  borderColor: '#C7D2FE',
+                  opacity: isRefreshingVisit ? 0.7 : 1
+                }}
+                title="Refresh visit data"
+              >
+                <RefreshCw className={`inline-block mr-2 h-4 w-4 ${isRefreshingVisit ? 'animate-spin' : ''}`} />
+                {isRefreshingVisit ? 'Refreshing...' : 'Refresh'}
+              </button>
               <button
                 onClick={handleBackToQueue}
                 className="px-4 py-2 rounded-lg font-medium transition-colors flex items-center text-base whitespace-nowrap"
@@ -2489,6 +2787,15 @@ const PatientConsultationPage = () => {
                                                   </div>
                                                 )}
 
+                                                {!result.report && (result.finding || result.resultText || result.findings || result.additionalNotes) && (
+                                                  <div className="mt-3">
+                                                    <p className="text-sm font-semibold text-indigo-800 mb-1">Findings:</p>
+                                                    <div className="text-sm bg-white p-3 rounded-lg border border-indigo-50 text-gray-800 whitespace-pre-wrap">
+                                                      {result.finding || result.resultText || result.findings || result.additionalNotes}
+                                                    </div>
+                                                  </div>
+                                                )}
+
                                                 {result.attachments && result.attachments.length > 0 && (
                                                   <div className="mt-3">
                                                     <p className="text-xs font-medium text-indigo-600 mb-2">Attached Scans ({result.attachments.length}):</p>
@@ -3254,7 +3561,7 @@ const PatientConsultationPage = () => {
                 const hasOldLabOrders = labBatchOrders.length > 0;
                 const hasOldLabResults = labBatchOrders.some(order =>
                   (order.labResults && order.labResults.length > 0) ||
-                  (order.detailedResults && order.detailedResults.length > 0)
+                  getBatchDetailedLabResults(order).length > 0
                 );
 
                 // Check new system (labTestOrders)
@@ -3273,10 +3580,11 @@ const PatientConsultationPage = () => {
                       📊 Lab Results Available
                     </h4>
                     <div className="space-y-4">
-                      {labBatchOrders.map((batchOrder) => (
-                        (batchOrder.labResults && batchOrder.labResults.length > 0) ||
-                        (batchOrder.detailedResults && batchOrder.detailedResults.length > 0)
-                      ) && (
+                      {labBatchOrders.map((batchOrder) => {
+                        const batchDetailedResults = getBatchDetailedLabResults(batchOrder);
+
+                        return ((batchOrder.labResults && batchOrder.labResults.length > 0) ||
+                        batchDetailedResults.length > 0) && (
                           <div key={batchOrder.id} className="p-4 border rounded-lg border-green-200 bg-green-50">
                             <div className="flex justify-between items-start mb-3">
                               <div>
@@ -3303,9 +3611,12 @@ const PatientConsultationPage = () => {
                             </div>
 
                             {/* Show detailed lab results */}
-                            {batchOrder.detailedResults && batchOrder.detailedResults.length > 0 && (
+                            {batchDetailedResults.length > 0 && (
                               <div className="space-y-4 mb-4">
-                                {batchOrder.detailedResults.map((detailedResult, index) => (
+                                {batchDetailedResults.map((detailedResult, index) => {
+                                  const detailedEntries = buildDetailedLabResultEntries(detailedResult);
+
+                                  return (
                                   <div key={detailedResult.id || index} className="p-4 bg-white rounded border">
                                     <div className="flex justify-between items-start mb-3">
                                       <h5 className="font-medium text-gray-800">
@@ -3327,16 +3638,17 @@ const PatientConsultationPage = () => {
                                     </div>
 
                                     {/* Display lab values in a professional format */}
-                                    {detailedResult.results && (
+                                    {detailedEntries.length > 0 && (
                                       <div className="mb-3">
                                         <h6 className="text-sm font-medium text-gray-700 mb-2">Test Results:</h6>
                                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                          {Object.entries(detailedResult.results).map(([key, value]) => (
-                                            <div key={key} className="p-2 bg-gray-50 rounded text-sm">
-                                              <div className="font-medium text-gray-800 capitalize">
-                                                {key.replace(/([A-Z])/g, ' $1').trim()}
-                                              </div>
-                                              <div className="text-gray-600">{value}</div>
+                                          {detailedEntries.map((entry) => (
+                                            <div key={entry.key} className="p-2 bg-gray-50 rounded text-sm">
+                                              <div className="font-medium text-gray-800">{entry.label}</div>
+                                              <div className="text-gray-600">{entry.value}{entry.unit ? ` ${entry.unit}` : ''}</div>
+                                              {entry.referenceRange && (
+                                                <div className="text-xs text-gray-500 mt-1">Ref: {entry.referenceRange}</div>
+                                              )}
                                             </div>
                                           ))}
                                         </div>
@@ -3352,14 +3664,17 @@ const PatientConsultationPage = () => {
                                       </div>
                                     )}
                                   </div>
-                                ))}
+                                );})}
                               </div>
                             )}
 
                             {/* Show regular lab results if any */}
                             {batchOrder.labResults && batchOrder.labResults.length > 0 && (
                               <div className="space-y-3">
-                                {batchOrder.labResults.map((result, index) => (
+                                {batchOrder.labResults.map((result, index) => {
+                                  const structuredEntries = buildLegacyLabResultEntries(result);
+
+                                  return (
                                   <div key={result.id || index} className="p-3 bg-white rounded border">
                                     <div className="flex justify-between items-start mb-2">
                                       <h5 className="font-medium text-gray-800">
@@ -3370,7 +3685,22 @@ const PatientConsultationPage = () => {
                                       </span>
                                     </div>
 
-                                    {result.resultText && (
+                                    {structuredEntries.length > 0 ? (
+                                      <div className="mb-3">
+                                        <p className="text-sm font-medium text-gray-700 mb-2">Result Details:</p>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                          {structuredEntries.map((entry) => (
+                                            <div key={entry.key} className="p-2 bg-gray-50 rounded text-sm">
+                                              <div className="font-medium text-gray-800">{entry.label}</div>
+                                              <div className="text-gray-600">{entry.value}{entry.unit ? ` ${entry.unit}` : ''}</div>
+                                              {entry.referenceRange && (
+                                                <div className="text-xs text-gray-500 mt-1">Ref: {entry.referenceRange}</div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : result.resultText && (
                                       <div className="mb-2">
                                         <p className="text-sm font-medium text-gray-700 mb-1">Result:</p>
                                         <p className="text-sm text-gray-600 bg-gray-50 p-2 rounded">
@@ -3410,11 +3740,11 @@ const PatientConsultationPage = () => {
                                       </div>
                                     )}
                                   </div>
-                                ))}
+                                );})}
                               </div>
                             )}
                           </div>
-                        ))}
+                        );})}
                     </div>
 
                     {/* New Lab Test Orders (New System) */}
@@ -3424,6 +3754,7 @@ const PatientConsultationPage = () => {
                           .filter(order => order.results && order.results.length > 0)
                           .map((order) => {
                             const latestResult = order.results[0];
+                            const resultEntries = buildLabTestOrderResultEntries(order, latestResult);
                             return (
                               <div key={order.id} className="p-4 border rounded-lg border-green-200 bg-green-50">
                                 <div className="flex justify-between items-start mb-3">
@@ -3441,24 +3772,21 @@ const PatientConsultationPage = () => {
                                 </div>
 
                                 {/* Display results with field labels */}
-                                {order.labTest.resultFields && order.labTest.resultFields.length > 0 && latestResult.results && (
+                                {resultEntries.length > 0 && (
                                   <div className="mb-3">
                                     <h6 className="text-sm font-medium text-gray-700 mb-2">Test Results:</h6>
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                      {order.labTest.resultFields.map((field) => {
-                                        const fieldValue = latestResult.results[field.fieldName];
-                                        if (fieldValue === undefined || fieldValue === null || fieldValue === '') return null;
-
-                                        const rangeCheck = checkValueInNormalRange(fieldValue, field.normalRange);
+                                      {resultEntries.map((entry) => {
+                                        const rangeCheck = checkValueInNormalRange(entry.value, entry.referenceRange);
                                         const isAbnormal = !rangeCheck.inRange;
 
                                         return (
-                                          <div key={field.id} className={`p-2 rounded text-sm ${isAbnormal ? 'bg-red-50 border border-red-200' : 'bg-white'}`}>
+                                          <div key={entry.key} className={`p-2 rounded text-sm ${isAbnormal ? 'bg-red-50 border border-red-200' : 'bg-white'}`}>
                                             <div className="font-medium text-gray-800">
-                                              {field.label}
+                                              {entry.label}
                                             </div>
                                             <div className={isAbnormal ? 'text-red-600 font-semibold' : 'text-gray-600'}>
-                                              {fieldValue} {field.unit || ''}
+                                              {stringifyResultValue(entry.value)} {entry.unit || ''}
                                             </div>
                                             {isAbnormal && rangeCheck.message && (
                                               <div className="text-xs text-red-500 mt-1">{rangeCheck.message}</div>
@@ -3627,6 +3955,16 @@ const PatientConsultationPage = () => {
               })()}
 
               {/* Lab Ordering Interface */}
+              <ExternalDiagnosticOrders
+                type="LAB"
+                visitId={visitId}
+                patient={visit?.patient}
+                currentUser={currentUser}
+                orders={visit?.externalDiagnosticOrders || []}
+                onUpdated={fetchVisitData}
+                disabled={isCompletedMode || ['COMPLETED', 'CANCELLED'].includes(visit?.status)}
+              />
+
               <div className="border-t pt-6" style={{ borderColor: '#E5E7EB' }}>
                 <LabOrdering
                   visitId={visitId}
@@ -3675,8 +4013,10 @@ const PatientConsultationPage = () => {
                                       {batchOrder.radiologyResults.map((result, idx) => (
                                         <div key={idx} className="bg-white p-3 rounded border border-green-100">
                                           <p className="font-semibold text-green-900">{result.testType?.name || 'Scan'}</p>
-                                          <p className="text-sm text-gray-700 mt-1">{result.finding}</p>
-                                          {result.report && <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{result.report}</p>}
+                                          <p className="text-sm text-gray-700 mt-1">{result.finding || result.resultText || result.findings || result.report || 'No findings recorded'}</p>
+                                          {result.report && result.report !== (result.finding || result.resultText || result.findings) && (
+                                            <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{result.report}</p>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
@@ -3699,33 +4039,39 @@ const PatientConsultationPage = () => {
                             .filter(order => !order.radiologyResults || order.radiologyResults.length === 0)
                             .map((batchOrder) => (
                               <div key={batchOrder.id} className="p-4 border rounded-lg border-yellow-200 bg-yellow-50 shadow-sm">
-                                <div className="flex justify-between items-center">
-                                  <div>
-                                    <p className="font-bold text-yellow-800">Order #{batchOrder.id} - In Progress</p>
-                                    <div className="mt-1 flex gap-2">
-                                      {batchOrder.services?.map((s, i) => (
-                                        <span key={i} className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full border border-yellow-200">
-                                          {s.investigationType?.name || s.service?.name}
-                                        </span>
-                                      ))}
-                                    </div>
-                                    <p className="text-xs text-yellow-600 mt-2">
-                                      Status: <span className="font-bold">{batchOrder.status}</span> • Created: {new Date(batchOrder.createdAt).toLocaleDateString()}
-                                    </p>
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                  <p className="font-bold text-yellow-800">Order #{batchOrder.id} - In Progress</p>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => printRadiologyOrders(batchOrder)}
+                                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-white text-yellow-700 rounded-full border border-yellow-200 hover:bg-yellow-100"
+                                      title="Print all tests in this order"
+                                    >
+                                      <Printer className="h-3.5 w-3.5" />
+                                      Print All
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteRadiologyBatchOrder(batchOrder.id)}
+                                      className="p-2 bg-white text-red-700 rounded-full border border-red-200 hover:bg-red-100"
+                                      title="Delete Radiology Order"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
                                   </div>
-                                  <button
-                                    onClick={() => printRadiologyOrders(batchOrder)}
-                                    className="p-2 bg-white text-yellow-700 rounded-full border border-yellow-200 hover:bg-yellow-100"
-                                  >
-                                    <Printer className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteRadiologyBatchOrder(batchOrder.id)}
-                                    className="p-2 bg-white text-red-700 rounded-full border border-red-200 hover:bg-red-100"
-                                    title="Delete Radiology Order"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
+                                </div>
+
+                                <div className="space-y-2">
+                                  {(batchOrder.services || []).map((service, idx) => (
+                                    <div key={`${batchOrder.id}-${service.id || idx}`} className="p-3 border rounded-lg border-yellow-100 bg-white/80">
+                                      <p className="font-semibold text-yellow-900">{service.investigationType?.name || service.service?.name || 'Radiology Test'}</p>
+                                      {service.instructions && (
+                                        <p className="text-xs text-yellow-700 mt-1">{service.instructions}</p>
+                                      )}
+                                      <p className="text-xs text-yellow-600 mt-2">
+                                        Status: <span className="font-bold">{batchOrder.status}</span> • Created: {new Date(batchOrder.createdAt).toLocaleDateString()}
+                                      </p>
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
                             ))}
@@ -3737,6 +4083,16 @@ const PatientConsultationPage = () => {
               })()}
 
               {/* Radiology Ordering Interface */}
+              <ExternalDiagnosticOrders
+                type="RADIOLOGY"
+                visitId={visitId}
+                patient={visit?.patient}
+                currentUser={currentUser}
+                orders={visit?.externalDiagnosticOrders || []}
+                onUpdated={fetchVisitData}
+                disabled={isCompletedMode || ['COMPLETED', 'CANCELLED'].includes(visit?.status)}
+              />
+
               <div className="border-t pt-6" style={{ borderColor: '#E5E7EB' }}>
                 <RadiologyOrdering
                   visitId={visitId}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Plus, CreditCard, Wallet, TrendingUp, TrendingDown, Search, X, Calendar, FileText, ArrowLeft, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, User, Receipt, Printer } from 'lucide-react';
+import { DollarSign, Plus, CreditCard, Wallet, TrendingUp, TrendingDown, Search, X, Calendar, FileText, ArrowLeft, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, User, Receipt, Printer, RefreshCw } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
@@ -46,6 +46,22 @@ const PatientAccounts = () => {
     fetchAccounts();
   };
 
+  const handleDeleteAccount = async (account) => {
+    if (!account?.id) return;
+    if (!window.confirm(`Delete the patient account for ${account.patient?.name || 'this patient'}? This will remove it from both admin and billing views.`)) {
+      return;
+    }
+
+    try {
+      await api.delete(`/accounts/${account.id}`);
+      toast.success('Patient account deleted successfully');
+      fetchAccounts();
+    } catch (error) {
+      console.error('Error deleting patient account:', error);
+      toast.error(error.response?.data?.error || 'Failed to delete patient account');
+    }
+  };
+
   const filteredAccounts = accounts.filter(account => {
     const matchesSearch = account.patient?.name?.toLowerCase().includes(searchTerm.toLowerCase());
 
@@ -75,20 +91,30 @@ const PatientAccounts = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Patient Accounts Management</h2>
           <p className="text-gray-600">Manage credit and advance payment accounts</p>
         </div>
-        {user?.role === 'ADMIN' && (
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => handleOpenModal(null, 'create')}
-            className="btn btn-primary flex items-center"
+            onClick={fetchAccounts}
+            className="btn btn-secondary flex items-center"
+            type="button"
           >
-            <Plus className="h-5 w-5 mr-2" />
-            Create Account
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
           </button>
-        )}
+          {['ADMIN', 'BILLING_OFFICER'].includes(user?.role) && (
+            <button
+              onClick={() => handleOpenModal(null, 'create')}
+              className="btn btn-primary flex items-center"
+            >
+              <Plus className="h-5 w-5 mr-2" />
+              Create Account
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -196,13 +222,20 @@ const PatientAccounts = () => {
                     </span>
                   </td>
                   <td>
-                    <span className={`font-semibold ${['CREDIT', 'BOTH'].includes(account.accountType)
-                      ? (account.balance > 0 ? 'text-blue-600' : 'text-gray-600')
-                      : (account.balance < 0 ? 'text-red-600' :
-                        account.balance > 0 ? 'text-green-600' : 'text-gray-600')
-                      }`}>
-                      {account.balance.toFixed(2)} ETB
-                    </span>
+                    <div>
+                      <span className={`font-semibold ${['CREDIT', 'BOTH'].includes(account.accountType)
+                        ? (account.balance > 0 ? 'text-blue-600' : 'text-gray-600')
+                        : (account.balance < 0 ? 'text-red-600' :
+                          account.balance > 0 ? 'text-green-600' : 'text-gray-600')
+                        }`}>
+                        {account.balance.toFixed(2)} ETB
+                      </span>
+                      {Number(account.pendingDepositAmount || 0) > 0 && (
+                        <p className="text-xs font-medium text-amber-600 mt-1">
+                          Pending billing acceptance: {Number(account.pendingDepositAmount).toFixed(2)} ETB
+                        </p>
+                      )}
+                    </div>
                   </td>
                   <td>
                     {['CREDIT', 'BOTH'].includes(account.accountType) ? (
@@ -247,6 +280,22 @@ const PatientAccounts = () => {
                             </button>
                           )}
                         </>
+                      )}
+                      {user?.role === 'ADMIN' && ['ADVANCE', 'BOTH'].includes(account.accountType) && (
+                        <button
+                          onClick={() => handleOpenModal(account, 'adjust')}
+                          className="px-2 py-1 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded text-sm"
+                        >
+                          Edit Money
+                        </button>
+                      )}
+                      {user?.role === 'ADMIN' && (
+                        <button
+                          onClick={() => handleDeleteAccount(account)}
+                          className="px-2 py-1 bg-red-100 text-red-700 hover:bg-red-200 rounded text-sm"
+                        >
+                          Delete Account
+                        </button>
                       )}
                     </div>
                   </td>
@@ -343,14 +392,14 @@ const AccountModal = ({ account, type, onClose }) => {
       setLoading(true);
 
       if (type === 'create') {
-        await api.post('/accounts', {
+        const response = await api.post('/accounts', {
           patientId: formData.patientId,
           accountType: formData.accountType,
           initialDeposit: formData.amount ? parseFloat(formData.amount) : 0
         });
-        toast.success('Account created and approved successfully');
+        toast.success(response.data?.message || 'Account saved successfully');
       } else if (type === 'deposit') {
-        await api.post('/accounts/deposit', {
+        const response = await api.post('/accounts/deposit', {
           accountId: account.id,
           patientId: account.patientId,
           amount: parseFloat(formData.amount),
@@ -359,9 +408,9 @@ const AccountModal = ({ account, type, onClose }) => {
           transNumber: formData.transNumber || undefined,
           notes: formData.notes || undefined
         });
-        toast.success('Deposit added successfully');
+        toast.success(response.data?.message || 'Deposit handled successfully');
       } else if (type === 'add-credit') {
-        await api.post('/accounts/deposit', {
+        const response = await api.post('/accounts/deposit', {
           accountId: account.id,
           patientId: account.patientId,
           amount: parseFloat(formData.amount),
@@ -371,9 +420,17 @@ const AccountModal = ({ account, type, onClose }) => {
           notes: formData.notes || 'Credit limit increased',
           isCreditAdd: true
         });
-        toast.success('Credit limit increased successfully');
+        toast.success(response.data?.message || 'Credit limit increased successfully');
+      } else if (type === 'adjust') {
+        const response = await api.post('/accounts/adjust', {
+          accountId: account.id,
+          patientId: account.patientId,
+          amount: parseFloat(formData.amount),
+          reason: formData.notes || 'Balance updated by admin'
+        });
+        toast.success(response.data?.message || 'Account money updated successfully');
       } else if (type === 'return-money' || type === 'payment') {
-        await api.post('/accounts/payment', {
+        const response = await api.post('/accounts/payment', {
           accountId: account.id,
           patientId: account.patientId,
           amount: parseFloat(formData.amount),
@@ -383,7 +440,7 @@ const AccountModal = ({ account, type, onClose }) => {
           notes: formData.notes || undefined,
           isCreditPayment: true
         });
-        toast.success('Payment returned successfully');
+        toast.success(response.data?.message || 'Payment returned successfully');
       }
 
       onClose();
@@ -414,8 +471,9 @@ const AccountModal = ({ account, type, onClose }) => {
               {type === 'create' ? 'Create Account' :
                 type === 'deposit' ? 'Add Deposit' :
                   type === 'add-credit' ? 'Add Credit' :
-                    type === 'return-money' ? 'Return Money to Clear Debt' :
-                      'Accept Payment'}
+                    type === 'adjust' ? 'Edit Account Money' :
+                      type === 'return-money' ? 'Return Money to Clear Debt' :
+                        'Accept Payment'}
             </h3>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
               <X className="h-5 w-5" />
@@ -494,7 +552,7 @@ const AccountModal = ({ account, type, onClose }) => {
               </>
             )}
 
-            {type !== 'create' && (
+            {type !== 'create' && type !== 'adjust' && (
               <>
                 <div>
                   <label className="label">Amount *</label>
@@ -550,6 +608,33 @@ const AccountModal = ({ account, type, onClose }) => {
                     rows="3"
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  />
+                </div>
+              </>
+            )}
+
+            {type === 'adjust' && (
+              <>
+                <div>
+                  <label className="label">New Balance Amount *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Reason *</label>
+                  <textarea
+                    className="input"
+                    rows="3"
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Explain why the account balance is being changed"
+                    required
                   />
                 </div>
               </>
@@ -1113,6 +1198,15 @@ const AccountDetailedView = ({ account, onClose }) => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Pending acceptance notice */}
+      {Number(account.pendingDepositAmount || 0) > 0 && (
+        <div className="px-6 py-3 bg-amber-50 border-b border-amber-200 flex-shrink-0">
+          <p className="text-sm font-medium text-amber-800">
+            ETB {Number(account.pendingDepositAmount).toFixed(2)} is waiting for billing acceptance. This money is not usable until billing accepts it and records it in daily cash.
+          </p>
         </div>
       )}
 

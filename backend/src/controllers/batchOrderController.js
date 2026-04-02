@@ -40,30 +40,12 @@ exports.createBatchOrder = async (req, res) => {
       return res.status(404).json({ error: 'Visit not found' });
     }
 
-    // Allow emergency patients or visits in correct status
-    const allowedStatuses = [
-      'TRIAGED',
-      'WAITING_FOR_DOCTOR',
-      'IN_DOCTOR_QUEUE',
-      'UNDER_DOCTOR_REVIEW',
-      'SENT_TO_LAB',
-      'SENT_TO_RADIOLOGY',
-      'SENT_TO_BOTH',
-      'NURSE_SERVICES_COMPLETED',
-      'AWAITING_RESULTS_REVIEW',
-      'DENTAL_SERVICES_ORDERED',
-      'PROCEDURE_SERVICES_ORDERED',
-      'PROCEDURE_SERVICES_COMPLETED',
-      'RETURNED_WITH_RESULTS',
-      'AWAITING_LAB_RESULTS',
-      'AWAITING_RADIOLOGY_RESULTS',
-      'WAITING_FOR_NURSE_SERVICE'
-    ];
-    if (!visit.isEmergency && !allowedStatuses.includes(visit.status)) {
+    // Block only true read-only visit states. Diagnostic ordering should remain possible
+    // even if upstream workflow status is lagging behind triage/consultation transitions.
+    if (['COMPLETED', 'CANCELLED'].includes(visit.status)) {
       return res.status(400).json({
-        error: 'Visit is not in an active consultation state',
-        status: visit.status,
-        allowedStatuses
+        error: 'Completed or cancelled visits are read-only. Open an active visit to place new orders.',
+        status: visit.status
       });
     }
 
@@ -768,15 +750,56 @@ exports.createBatchOrder = async (req, res) => {
     if (currentVisit.isEmergency) {
       newStatus = 'UNDER_DOCTOR_REVIEW';
     } else {
-      // For regular patients, use existing logic
-      if (currentVisit.status === 'UNDER_DOCTOR_REVIEW' || currentVisit.status === 'WAITING_FOR_DOCTOR') {
-        if (type === 'LAB') {
-          newStatus = 'SENT_TO_LAB';
-        } else if (type === 'RADIOLOGY') {
-          newStatus = 'SENT_TO_RADIOLOGY';
-        } else if (type === 'MIXED') {
+      const activeStatuses = ['UNPAID', 'PAID', 'QUEUED', 'IN_PROGRESS', 'COMPLETED'];
+      const [activeLabBatchOrders, activeRadiologyBatchOrders, activeLabOrders, activeRadiologyOrders, activeLabTestOrders] = await Promise.all([
+        prisma.batchOrder.count({
+          where: {
+            visitId,
+            type: { in: ['LAB', 'MIXED'] },
+            status: { in: activeStatuses }
+          }
+        }),
+        prisma.batchOrder.count({
+          where: {
+            visitId,
+            type: { in: ['RADIOLOGY', 'MIXED'] },
+            status: { in: activeStatuses }
+          }
+        }),
+        prisma.labOrder.count({
+          where: {
+            visitId,
+            status: { in: activeStatuses }
+          }
+        }),
+        prisma.radiologyOrder.count({
+          where: {
+            visitId,
+            status: { in: activeStatuses }
+          }
+        }),
+        prisma.labTestOrder.count({
+          where: {
+            visitId,
+            status: { in: activeStatuses }
+          }
+        })
+      ]);
+
+      const hasLabOrders = (activeLabBatchOrders + activeLabOrders + activeLabTestOrders) > 0;
+      const hasRadiologyOrders = (activeRadiologyBatchOrders + activeRadiologyOrders) > 0;
+
+      // Always set SENT_* status for diagnostic ordering so visit leaves doctor queue immediately.
+      if (['LAB', 'RADIOLOGY', 'MIXED'].includes(type)) {
+        if (hasLabOrders && hasRadiologyOrders) {
           newStatus = 'SENT_TO_BOTH';
-        } else if (type === 'NURSE') {
+        } else if (hasLabOrders) {
+          newStatus = 'SENT_TO_LAB';
+        } else if (hasRadiologyOrders) {
+          newStatus = 'SENT_TO_RADIOLOGY';
+        }
+      } else if (currentVisit.status === 'UNDER_DOCTOR_REVIEW' || currentVisit.status === 'WAITING_FOR_DOCTOR') {
+        if (type === 'NURSE') {
           newStatus = 'NURSE_SERVICES_ORDERED';
         } else if (type === 'DENTAL') {
           newStatus = 'DENTAL_SERVICES_ORDERED';
@@ -834,7 +857,7 @@ exports.createBatchOrder = async (req, res) => {
           newStatus = 'NURSE_SERVICES_ORDERED';
         }
       }
-      // For other cases (like IN_DOCTOR_QUEUE, NURSE_SERVICES_COMPLETED), keep the current status
+      // For other non-diagnostic cases, keep the current status
     }
 
     // Always update visit status when ordering dental services to remove from queue
@@ -1514,5 +1537,249 @@ exports.completeProcedure = async (req, res) => {
   } catch (error) {
     console.error('Error completing procedure:', error);
     res.status(500).json({ error: error.message });
+  }
+};
+
+const removeOnePendingBillingServiceForVisit = async (tx, visitId, serviceId) => {
+  if (!visitId || !serviceId) return;
+
+  const billingService = await tx.billingService.findFirst({
+    where: {
+      serviceId,
+      billing: {
+        visitId,
+        status: 'PENDING'
+      }
+    },
+    include: {
+      billing: true
+    },
+    orderBy: {
+      id: 'desc'
+    }
+  });
+
+  if (!billingService) return;
+
+  await tx.billingService.delete({
+    where: { id: billingService.id }
+  });
+
+  const remainingServices = await tx.billingService.findMany({
+    where: { billingId: billingService.billingId }
+  });
+
+  if (remainingServices.length === 0) {
+    await tx.billing.delete({
+      where: { id: billingService.billingId }
+    });
+    return;
+  }
+
+  const newTotalAmount = remainingServices.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+  await tx.billing.update({
+    where: { id: billingService.billingId },
+    data: { totalAmount: newTotalAmount }
+  });
+};
+
+const refreshVisitOrderStatus = async (tx, visitId) => {
+  if (!visitId) return;
+
+  const visitWithOrders = await tx.visit.findUnique({
+    where: { id: visitId },
+    include: {
+      labOrders: true,
+      radiologyOrders: true,
+      batchOrders: {
+        include: {
+          services: true
+        }
+      },
+      labTestOrders: true
+    }
+  });
+
+  if (!visitWithOrders) return;
+
+  const hasLabOrders =
+    (visitWithOrders.labOrders || []).length > 0 ||
+    (visitWithOrders.labTestOrders || []).length > 0 ||
+    (visitWithOrders.batchOrders || []).some((order) => order.type === 'LAB' && (order.services || []).length > 0);
+
+  const hasRadiologyOrders =
+    (visitWithOrders.radiologyOrders || []).length > 0 ||
+    (visitWithOrders.batchOrders || []).some((order) => order.type === 'RADIOLOGY' && (order.services || []).length > 0);
+
+  let nextStatus = 'UNDER_DOCTOR_REVIEW';
+  if (hasLabOrders && hasRadiologyOrders) nextStatus = 'SENT_TO_BOTH';
+  else if (hasLabOrders) nextStatus = 'SENT_TO_LAB';
+  else if (hasRadiologyOrders) nextStatus = 'SENT_TO_RADIOLOGY';
+
+  await tx.visit.update({
+    where: { id: visitId },
+    data: { status: nextStatus }
+  });
+};
+
+exports.deleteLabBatchOrder = async (req, res) => {
+  try {
+    const batchOrderId = parseInt(req.params.id, 10);
+    if (!batchOrderId) {
+      return res.status(400).json({ error: 'Invalid batch order id' });
+    }
+
+    const batchOrder = await prisma.batchOrder.findUnique({
+      where: { id: batchOrderId },
+      include: {
+        services: true,
+        detailedResults: true,
+        labTestOrders: {
+          include: {
+            results: true
+          }
+        }
+      }
+    });
+
+    if (!batchOrder || batchOrder.type !== 'LAB') {
+      return res.status(404).json({ error: 'Lab batch order not found' });
+    }
+
+    if (batchOrder.status === 'COMPLETED' || batchOrder.detailedResults.length > 0) {
+      return res.status(400).json({ error: 'Completed lab orders cannot be deleted' });
+    }
+
+    const hasProcessedLabTestOrder = batchOrder.labTestOrders.some((order) =>
+      order.status === 'COMPLETED' || (order.results && order.results.length > 0)
+    );
+
+    if (hasProcessedLabTestOrder) {
+      return res.status(400).json({ error: 'Lab order already has results and cannot be deleted' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const service of batchOrder.services) {
+        await removeOnePendingBillingServiceForVisit(tx, batchOrder.visitId, service.serviceId);
+      }
+
+      await tx.batchOrderService.deleteMany({
+        where: { batchOrderId }
+      });
+
+      for (const order of batchOrder.labTestOrders) {
+        await tx.labTestOrder.delete({ where: { id: order.id } });
+      }
+
+      await tx.batchOrder.delete({
+        where: { id: batchOrderId }
+      });
+
+      await refreshVisitOrderStatus(tx, batchOrder.visitId);
+    });
+
+    return res.json({
+      success: true,
+      message: 'Lab order deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting lab batch order:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete lab order' });
+  }
+};
+
+exports.deleteLabTestOrder = async (req, res) => {
+  try {
+    const orderId = String(req.params.id || '').trim();
+    if (!orderId) {
+      return res.status(400).json({ error: 'Invalid lab test order id' });
+    }
+
+    const order = await prisma.labTestOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        results: true,
+        labTest: {
+          select: {
+            serviceId: true
+          }
+        }
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Lab test order not found' });
+    }
+
+    if (order.status === 'COMPLETED' || order.results.length > 0) {
+      return res.status(400).json({ error: 'Completed lab test orders cannot be deleted' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await removeOnePendingBillingServiceForVisit(tx, order.visitId, order.labTest?.serviceId || null);
+
+      await tx.labTestOrder.delete({
+        where: { id: orderId }
+      });
+
+      await refreshVisitOrderStatus(tx, order.visitId);
+    });
+
+    return res.json({
+      success: true,
+      message: 'Lab test order deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting lab test order:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete lab test order' });
+  }
+};
+
+exports.deleteRadiologyBatchOrder = async (req, res) => {
+  try {
+    const batchOrderId = parseInt(req.params.id, 10);
+    if (!batchOrderId) {
+      return res.status(400).json({ error: 'Invalid batch order id' });
+    }
+
+    const batchOrder = await prisma.batchOrder.findUnique({
+      where: { id: batchOrderId },
+      include: {
+        services: true,
+        radiologyResults: true
+      }
+    });
+
+    if (!batchOrder || batchOrder.type !== 'RADIOLOGY') {
+      return res.status(404).json({ error: 'Radiology batch order not found' });
+    }
+
+    if (batchOrder.status === 'COMPLETED' || batchOrder.radiologyResults.length > 0) {
+      return res.status(400).json({ error: 'Completed radiology orders cannot be deleted' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const service of batchOrder.services) {
+        await removeOnePendingBillingServiceForVisit(tx, batchOrder.visitId, service.serviceId);
+      }
+
+      await tx.batchOrderService.deleteMany({
+        where: { batchOrderId }
+      });
+
+      await tx.batchOrder.delete({
+        where: { id: batchOrderId }
+      });
+
+      await refreshVisitOrderStatus(tx, batchOrder.visitId);
+    });
+
+    return res.json({
+      success: true,
+      message: 'Radiology order deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting radiology batch order:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete radiology order' });
   }
 };
