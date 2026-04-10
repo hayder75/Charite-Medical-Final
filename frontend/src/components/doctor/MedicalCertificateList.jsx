@@ -29,11 +29,13 @@ const MedicalCertificateList = () => {
         }
       });
 
-      setCertificates(response.data.certificates);
-      setPagination(response.data.pagination);
+      setCertificates(response.data?.certificates || []);
+      setPagination(response.data?.pagination || { page: 1, limit: 10, total: 0, pages: 0 });
     } catch (error) {
       console.error('Error fetching certificates:', error);
       toast.error('Failed to fetch certificates');
+      setCertificates([]);
+      setPagination({ page: 1, limit: 10, total: 0, pages: 0 });
     } finally {
       setLoading(false);
     }

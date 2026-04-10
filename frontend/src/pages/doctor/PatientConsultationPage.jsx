@@ -383,31 +383,12 @@ const PatientConsultationPage = () => {
 
   const parseStructuredResultObject = (value) => {
     if (!value) return null;
-    if (typeof value === 'object' && !Array.isArray(value)) {
-      if (value.results && typeof value.results === 'object' && !Array.isArray(value.results)) {
-        return value.results;
-      }
-      if (value.data && typeof value.data === 'object' && !Array.isArray(value.data)) {
-        return value.data;
-      }
-      return value;
-    }
-    if (Array.isArray(value)) {
-      const mapped = value.reduce((acc, item) => {
-        if (!item || typeof item !== 'object') return acc;
-        const key = item.fieldName || item.testName || item.name || item.label;
-        const itemValue = item.value ?? item.result;
-        if (!key || !hasDisplayableResultValue(itemValue)) return acc;
-        acc[key] = itemValue;
-        return acc;
-      }, {});
-      return Object.keys(mapped).length > 0 ? mapped : null;
-    }
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
     if (typeof value !== 'string') return null;
 
     try {
       const parsed = JSON.parse(value);
-      return parseStructuredResultObject(parsed);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
     } catch {
       return null;
     }
@@ -546,44 +527,6 @@ const PatientConsultationPage = () => {
     );
 
     return hasDisplayableResultValue(value) ? value : undefined;
-  };
-
-  const buildLabTestOrderResultEntries = (order, latestResult) => {
-    const resultObject = parseStructuredResultObject(latestResult?.results);
-    if (!resultObject) return [];
-
-    const resultFields = Array.isArray(order?.labTest?.resultFields)
-      ? order.labTest.resultFields
-      : [];
-
-    const mappedEntries = resultFields
-      .map((field) => {
-        const rawValue = getStructuredFieldValue(resultObject, field);
-        if (rawValue === undefined) return null;
-
-        return {
-          key: field.id || field.fieldName || field.label,
-          label: field.label || humanizeResultKey(field.fieldName),
-          value: rawValue,
-          unit: field.unit || '',
-          referenceRange: field.normalRange || ''
-        };
-      })
-      .filter(Boolean);
-
-    if (mappedEntries.length > 0) {
-      return mappedEntries;
-    }
-
-    return Object.entries(resultObject)
-      .filter(([, value]) => hasDisplayableResultValue(value))
-      .map(([fieldName, value]) => ({
-        key: fieldName,
-        label: humanizeResultKey(fieldName),
-        value,
-        unit: '',
-        referenceRange: ''
-      }));
   };
 
   const doctorCacheScope = useMemo(
@@ -3754,7 +3697,6 @@ const PatientConsultationPage = () => {
                           .filter(order => order.results && order.results.length > 0)
                           .map((order) => {
                             const latestResult = order.results[0];
-                            const resultEntries = buildLabTestOrderResultEntries(order, latestResult);
                             return (
                               <div key={order.id} className="p-4 border rounded-lg border-green-200 bg-green-50">
                                 <div className="flex justify-between items-start mb-3">
@@ -3772,21 +3714,24 @@ const PatientConsultationPage = () => {
                                 </div>
 
                                 {/* Display results with field labels */}
-                                {resultEntries.length > 0 && (
+                                {order.labTest.resultFields && order.labTest.resultFields.length > 0 && latestResult.results && (
                                   <div className="mb-3">
                                     <h6 className="text-sm font-medium text-gray-700 mb-2">Test Results:</h6>
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                      {resultEntries.map((entry) => {
-                                        const rangeCheck = checkValueInNormalRange(entry.value, entry.referenceRange);
+                                      {order.labTest.resultFields.map((field) => {
+                                        const fieldValue = getStructuredFieldValue(latestResult.results, field);
+                                        if (fieldValue === undefined) return null;
+
+                                        const rangeCheck = checkValueInNormalRange(fieldValue, field.normalRange);
                                         const isAbnormal = !rangeCheck.inRange;
 
                                         return (
-                                          <div key={entry.key} className={`p-2 rounded text-sm ${isAbnormal ? 'bg-red-50 border border-red-200' : 'bg-white'}`}>
+                                          <div key={field.id} className={`p-2 rounded text-sm ${isAbnormal ? 'bg-red-50 border border-red-200' : 'bg-white'}`}>
                                             <div className="font-medium text-gray-800">
-                                              {entry.label}
+                                              {field.label}
                                             </div>
                                             <div className={isAbnormal ? 'text-red-600 font-semibold' : 'text-gray-600'}>
-                                              {stringifyResultValue(entry.value)} {entry.unit || ''}
+                                              {fieldValue} {field.unit || ''}
                                             </div>
                                             {isAbnormal && rangeCheck.message && (
                                               <div className="text-xs text-red-500 mt-1">{rangeCheck.message}</div>

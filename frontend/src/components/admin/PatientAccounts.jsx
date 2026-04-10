@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Plus, CreditCard, Wallet, TrendingUp, TrendingDown, Search, X, Calendar, FileText, ArrowLeft, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, User, Receipt, Printer, RefreshCw } from 'lucide-react';
+import { DollarSign, Plus, CreditCard, Wallet, TrendingUp, TrendingDown, Search, X, Calendar, FileText, ArrowLeft, ChevronDown, ChevronUp, Clock, CheckCircle, AlertTriangle, User, Receipt, Printer } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
@@ -91,30 +91,20 @@ const PatientAccounts = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center gap-3 flex-wrap">
+      <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Patient Accounts Management</h2>
           <p className="text-gray-600">Manage credit and advance payment accounts</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        {['ADMIN', 'BILLING_OFFICER'].includes(user?.role) && (
           <button
-            onClick={fetchAccounts}
-            className="btn btn-secondary flex items-center"
-            type="button"
+            onClick={() => handleOpenModal(null, 'create')}
+            className="btn btn-primary flex items-center"
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
+            <Plus className="h-5 w-5 mr-2" />
+            Create Account
           </button>
-          {['ADMIN', 'BILLING_OFFICER'].includes(user?.role) && (
-            <button
-              onClick={() => handleOpenModal(null, 'create')}
-              className="btn btn-primary flex items-center"
-            >
-              <Plus className="h-5 w-5 mr-2" />
-              Create Account
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Stats Cards */}

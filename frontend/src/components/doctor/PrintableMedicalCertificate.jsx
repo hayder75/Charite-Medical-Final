@@ -63,75 +63,77 @@ const PrintableMedicalCertificate = ({ certificate, onClose }) => {
       </div>
 
       {/* Certificate Document */}
-      <div className="certificate-content bg-white shadow-lg mx-auto max-w-4xl print:shadow-none print:max-w-none print:mx-0 print:bg-white">
+      <div className="certificate-content bg-white shadow-lg mx-auto max-w-2xl print:shadow-none print:max-w-none print:mx-0 print:bg-white">
         {/* Header */}
-        <div className="text-center py-8 border-b border-gray-300">
+        <div className="text-center py-4 border-b border-gray-300">
           <img
             src="/clinic-logo.jpg"
             alt="Charite Medium Clinic Logo"
-            className="h-24 w-24 mx-auto mb-4 rounded-full object-cover border-2 border-gray-300"
+            className="h-16 w-16 mx-auto mb-2 rounded-full object-cover border-2 border-gray-300"
           />
-          <h1 className="text-3xl font-bold text-black mb-2">Charite Medium Clinic</h1>
+          <h1 className="text-xl font-bold text-black">Charite Medium Clinic</h1>
         </div>
 
         {/* Certificate Title */}
-        <div className="text-center py-6 border-b border-gray-300">
+        <div className="text-center py-4 border-b border-gray-300">
           <div className="flex justify-between items-center">
             <div className="flex-1"></div>
-            <h2 className="text-3xl font-bold text-black uppercase">MEDICAL CERTIFICATE</h2>
+            <h2 className="text-xl font-bold text-black uppercase">MEDICAL CERTIFICATE</h2>
             <div className="flex-1 text-right">
-              <p className="text-lg text-black">Certificate No.: {certificate.certificateNo}</p>
+              <p className="text-sm text-black">No.: {certificate.certificateNo}</p>
             </div>
           </div>
         </div>
 
         {/* Patient Information */}
-        <div className="py-6 border-b border-gray-300">
-          <h3 className="text-lg font-bold text-black underline mb-4">Patient Information</h3>
-          <div className="space-y-2">
+        <div className="py-3 border-b border-gray-300">
+          <h3 className="text-sm font-bold text-black underline mb-2">Patient Information</h3>
+          <div className="grid grid-cols-3 gap-2 text-sm">
             <p className="text-black"><strong>Name:</strong> {certificate.patient.name}</p>
-            <p className="text-black"><strong>Gender:</strong> {certificate.patient.gender || 'Not specified'}</p>
-            <p className="text-black"><strong>Age:</strong> {calculateAge(certificate.patient.dob)} years</p>
+            <p className="text-black"><strong>Gender:</strong> {certificate.patient.gender || '-'}</p>
+            <p className="text-black"><strong>Age:</strong> {calculateAge(certificate.patient.dob)} yrs</p>
           </div>
         </div>
 
         {/* Certificate Details */}
-        <div className="py-6 border-b border-gray-300">
-          <h3 className="text-lg font-bold text-black underline mb-4">Certificate Details</h3>
-          <div className="space-y-2">
-            <p className="text-black"><strong>Date Issued:</strong> {formatDate(certificate.certificateDate)}</p>
-          </div>
+        <div className="py-3 border-b border-gray-300">
+          <h3 className="text-sm font-bold text-black underline mb-2">Certificate Details</h3>
+          <p className="text-black text-sm"><strong>Date Issued:</strong> {formatDate(certificate.certificateDate)}</p>
         </div>
 
         {/* Medical Information */}
-        <div className="py-6 border-b border-gray-300">
-          <h3 className="text-lg font-bold text-black underline mb-4">Medical Information</h3>
-          <div className="space-y-2">
+        <div className="py-3 border-b border-gray-300">
+          <h3 className="text-sm font-bold text-black underline mb-2">Medical Information</h3>
+          <div className="space-y-1 text-sm">
             <p className="text-black"><strong>Diagnosis:</strong> {certificate.diagnosis}</p>
             <p className="text-black"><strong>Treatment:</strong> {certificate.treatment}</p>
-            <p className="text-black"><strong>Recommendations:</strong> {certificate.recommendations}</p>
+            {certificate.recommendations && (
+              <p className="text-black"><strong>Recommendations:</strong> {certificate.recommendations}</p>
+            )}
           </div>
         </div>
 
         {/* Rest Period */}
-        <div className="py-6 border-b border-gray-300">
-          <h3 className="text-lg font-bold text-black underline text-center mb-4">Rest Period</h3>
-          <div className="text-center">
-            <p className="text-lg text-black mb-2">
-              From {formatDate(certificate.restStartDate)} to {formatDate(certificate.restEndDate)}
+        <div className="py-3 border-b border-gray-300">
+          <h3 className="text-sm font-bold text-black underline text-center mb-2">Rest Period</h3>
+          <div className="text-center text-sm">
+            <p className="text-black mb-1">
+              {formatDate(certificate.restStartDate)} - {formatDate(certificate.restEndDate)}
             </p>
-            <p className="text-lg text-black">
-              (Total of {calculateTotalDays(certificate.restStartDate, certificate.restEndDate)} days)
+            <p className="text-black">
+              ({calculateTotalDays(certificate.restStartDate, certificate.restEndDate)} days)
             </p>
           </div>
         </div>
 
         {/* Issued By */}
-        <div className="py-6">
-          <h3 className="text-lg font-bold text-black underline mb-4">Issued By</h3>
-          <div className="space-y-2">
-            <p className="text-black"><strong>Name:</strong> {certificate.doctor.fullname}</p>
-            <p className="text-black"><strong>Qualification:</strong> {certificate.doctor.qualifications || 'General Doctor'}</p>
+        <div className="py-3">
+          <h3 className="text-sm font-bold text-black underline mb-2">Issued By</h3>
+          <div className="text-sm">
+            <p className="text-black"><strong>Dr.</strong> {certificate.doctor.fullname}</p>
+            {certificate.doctor.qualifications && (
+              <p className="text-black">{certificate.doctor.qualifications}</p>
+            )}
           </div>
         </div>
 
@@ -202,8 +204,8 @@ const PrintableMedicalCertificate = ({ certificate, onClose }) => {
           
           /* Ensure proper page margins */
           @page {
-            margin: 0.5in;
-            size: A4;
+            margin: 0.25in;
+            size: A5;
           }
           
           /* Hide all navigation elements */
@@ -215,7 +217,7 @@ const PrintableMedicalCertificate = ({ certificate, onClose }) => {
           .certificate-content {
             page-break-inside: avoid;
             margin: 0;
-            padding: 20px;
+            padding: 15px;
           }
           
           /* Make sure text is black for printing */

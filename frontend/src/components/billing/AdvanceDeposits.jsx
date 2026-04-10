@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, CheckCircle, Wallet, Search, Plus, Clock, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import { DollarSign, CheckCircle, Wallet, Search, Plus, Clock, XCircle, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
@@ -151,29 +151,19 @@ const AdvanceDeposits = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center gap-3 flex-wrap">
+      <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Advance Payment Deposits</h2>
           <p className="text-gray-600">Accept deposits from advance payment users</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={fetchAdvanceAccounts}
-            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition flex items-center gap-2"
-            type="button"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
-          <button
-            onClick={() => navigate('/billing/patient-accounts')}
-            className="px-4 py-2 rounded-lg text-white font-medium transition flex items-center gap-2"
-            style={{ backgroundColor: '#2563EB' }}
-          >
-            <Plus className="h-4 w-4" />
-            Create Advance Account
-          </button>
-        </div>
+        <button
+          onClick={() => navigate('/billing/patient-accounts')}
+          className="px-4 py-2 rounded-lg text-white font-medium transition flex items-center gap-2"
+          style={{ backgroundColor: '#2563EB' }}
+        >
+          <Plus className="h-4 w-4" />
+          Create Advance Account
+        </button>
       </div>
 
       {/* Search */}

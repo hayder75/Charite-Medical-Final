@@ -87,6 +87,11 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
     fetchPatientVisits(patient.id);
   };
 
+  const stripHtmlTags = (html) => {
+    if (!html) return '';
+    return html.replace(/<\/?p>/gi, '').trim();
+  };
+
   const handleVisitSelect = async (visitId) => {
     if (!visitId) return;
     setFormData(prev => ({ ...prev, visitId: parseInt(visitId) }));
@@ -94,18 +99,55 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
     console.log('Selecting visit ID:', visitId);
 
     try {
-      const response = await api.get(`/doctors/visits/${visitId}/diagnosis-notes`);
-      console.log('Fetched diagnosis notes response:', response.data);
+      // Fetch both diagnosis notes and structured diagnoses in parallel
+      const [notesResponse, diagnosesResponse] = await Promise.all([
+        api.get(`/doctors/visits/${visitId}/diagnosis-notes`),
+        api.get(`/diseases/diagnosis/${visitId}`).catch(() => ({ data: [] }))
+      ]);
 
-      const notes = response.data.notes;
-      if (notes) {
-        console.log('Processing notes:', notes);
+      const notes = notesResponse.data?.notes;
+      const diagnoses = diagnosesResponse.data || [];
+
+      console.log('Fetched diagnosis notes:', notes);
+      console.log('Fetched diagnoses:', diagnoses);
+
+      // Format structured diagnoses
+      let diagnosisText = '';
+      if (diagnoses && diagnoses.length > 0) {
+        diagnosisText = diagnoses.map(d => {
+          let text = d.disease?.name || '';
+          if (d.type) text += ` (${d.type})`;
+          if (d.notes) text += ` - ${d.notes}`;
+          return text;
+        }).join(', ');
+      }
+
+      // Fallback: use chief complaint if no structured diagnosis
+      let fallbackDiagnosis = '';
+      if (!diagnosisText && notes?.chiefComplaint) {
+        // Strip HTML tags from chief complaint
+        fallbackDiagnosis = notes.chiefComplaint.replace(/<\/?p>/gi, '').replace(/<br\s*\/?>/gi, ', ').trim();
+        if (fallbackDiagnosis.length > 100) {
+          fallbackDiagnosis = fallbackDiagnosis.substring(0, 100) + '...';
+        }
+      }
+
+      // Combine with assessmentAndDiagnosis if available
+      const combinedDiagnosis = diagnosisText || notes?.assessmentAndDiagnosis || fallbackDiagnosis || '';
+
+      // Strip HTML from treatmentGiven
+      const cleanTreatment = stripHtmlTags(notes?.treatmentGiven);
+      const cleanRecommendations = notes?.treatmentPlan || '';
+
+      console.log('Combined diagnosis:', combinedDiagnosis);
+
+      if (combinedDiagnosis || cleanTreatment || cleanRecommendations) {
         setFormData(prev => {
           const updated = {
             ...prev,
-            diagnosis: notes.assessmentAndDiagnosis || prev.diagnosis,
-            treatment: notes.treatmentGiven || prev.treatment,
-            recommendations: notes.treatmentPlan || prev.recommendations
+            diagnosis: combinedDiagnosis || prev.diagnosis,
+            treatment: cleanTreatment || prev.treatment,
+            recommendations: cleanRecommendations || prev.recommendations
           };
           console.log('Updated Form Data:', updated);
           return updated;
@@ -113,9 +155,10 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
         toast.success('Visit data fetched successfully');
       } else {
         console.warn('No notes found in response');
+        toast.error('No diagnosis data found for this visit. Please add diagnoses in the consultation page first.');
       }
     } catch (error) {
-      console.error('Error fetching diagnosis notes:', error);
+      console.error('Error fetching visit data:', error);
       toast.error('Failed to fetch visit data');
     }
   };
@@ -381,7 +424,7 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
                 name="diagnosis"
                 value={formData.diagnosis}
                 onChange={handleInputChange}
-                rows={2}
+                rows={5}
                 placeholder="Enter diagnosis..."
                 className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.diagnosis ? 'border-red-500' : ''}`}
               />
@@ -398,7 +441,7 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
                 name="treatment"
                 value={formData.treatment}
                 onChange={handleInputChange}
-                rows={2}
+                rows={5}
                 placeholder="Enter treatment details..."
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
@@ -412,7 +455,7 @@ const MedicalCertificateForm = ({ certificate, onSave, onCancel, isEditing = fal
                 name="recommendations"
                 value={formData.recommendations}
                 onChange={handleInputChange}
-                rows={2}
+                rows={5}
                 placeholder="Enter recommendations..."
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
