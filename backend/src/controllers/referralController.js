@@ -261,7 +261,7 @@ const referralController = {
 
             const docDefinition = {
                 content: [
-                    { text: 'CHARITE MEDIUM CLINIC', style: 'header', alignment: 'center' },
+                    { text: 'SELIHOM MEDICAL CLINIC', style: 'header', alignment: 'center' },
                     { text: 'REFERRAL FORM', style: 'subheader', alignment: 'center', margin: [0, 5, 0, 15] },
                     {
                         columns: [

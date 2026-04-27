@@ -5289,7 +5289,7 @@ exports.generateVisitHistoryPDF = async (req, res) => {
     const content = [
       // Header
       {
-        text: 'Charite Medium Clinic',
+        text: 'Selihom Medical Clinic',
         style: 'header',
         alignment: 'center',
         margin: [0, 0, 0, 5]
@@ -5585,7 +5585,7 @@ exports.generateVisitHistoryPDF = async (req, res) => {
         margin: [0, 20, 0, 10]
       },
       {
-        text: 'Charite Medium Clinic',
+        text: 'Selihom Medical Clinic',
         style: 'footer',
         alignment: 'center',
         margin: [0, 5, 0, 0]

@@ -45,6 +45,7 @@ const InternationalMedicalCertificatePage = () => {
         hcg: 'Negative',
         fbsRbs: 'Negative',
         finalAssessment: 'FIT',
+        treatment: ''
         directoryName: ''
     });
 
@@ -94,10 +95,35 @@ const InternationalMedicalCertificatePage = () => {
         setSelectedPatient(patient);
         setPatientSearchQuery(patient.name);
         setPatientResults([]);
-        setFormData(prev => ({
-            ...prev,
-            patientId: patient.id
-        }));
+        
+        // Fetch latest visit to get medications for treatment
+        try {
+            const visitResponse = await api.get(`/doctors/patient/${patient.id}/visits?status=COMPLETED`);
+            const visits = visitResponse.data.queue || [];
+            const latestVisit = visits.find(v => v.status === 'COMPLETED') || visits[0];
+            
+            if (latestVisit && latestVisit.medicationOrders && latestVisit.medicationOrders.length > 0) {
+                const meds = latestVisit.medicationOrders.map(m => m.medication?.name || m.customName || 'Medication').join(', ');
+                setFormData(prev => ({
+                    ...prev,
+                    patientId: patient.id,
+                    visitId: latestVisit.id,
+                    treatment: meds
+                }));
+            } else {
+                setFormData(prev => ({
+                    ...prev,
+                    patientId: patient.id,
+                    visitId: latestVisit?.id || ''
+                }));
+            }
+        } catch (err) {
+            console.warn('Could not fetch visit medications:', err);
+            setFormData(prev => ({
+                ...prev,
+                patientId: patient.id
+            }));
+        }
     };
 
     const handleInputChange = (e) => {
@@ -158,6 +184,7 @@ const InternationalMedicalCertificatePage = () => {
             hcg: 'Negative',
             fbsRbs: 'Negative',
             finalAssessment: 'FIT',
+            treatment: '',
             directoryName: ''
         });
     };
@@ -167,7 +194,8 @@ const InternationalMedicalCertificatePage = () => {
         setPatientSearchQuery(cert.patient.name);
         setFormData({
             ...cert,
-            visitId: cert.visitId || ''
+            visitId: cert.visitId || '',
+            treatment: cert.treatment || ''
         });
         setIsEditing(true);
         setShowForm(true);
@@ -764,6 +792,17 @@ const InternationalMedicalCertificatePage = () => {
                                     </div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="font-bold text-gray-700">MEDICATIONS / TREATMENT ORDERED:</label>
+                            <textarea
+                                name="treatment"
+                                value={formData.treatment}
+                                onChange={handleInputChange}
+                                className="w-full px-4 py-3 border rounded-lg min-h-[100px] text-lg"
+                                placeholder="Enter medications prescribed for treatment..."
+                            />
                         </div>
 
                         <div className="flex justify-end gap-3 pt-6 border-t font-bold">

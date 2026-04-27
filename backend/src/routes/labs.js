@@ -35,7 +35,7 @@ router.patch('/orders/:labOrderId', authMiddleware, roleGuard(['LAB_TECHNICIAN',
 router.get('/orders/:batchOrderId/pdf', authMiddleware, roleGuard(['LAB_TECHNICIAN', 'ADMIN', ...DOCTOR_ROLES]), labController.generateLabResultsPDF);
 
 // Lab Reports - Daily, Weekly, Monthly
-router.get('/reports', authMiddleware, roleGuard(['LAB_TECHNICIAN', 'ADMIN']), labController.getLabReports);
+// router.get('/reports', authMiddleware, roleGuard(['LAB_TECHNICIAN', 'ADMIN']), labController.getLabReports);
 
 module.exports = router;
 

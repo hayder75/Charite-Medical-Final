@@ -1280,7 +1280,8 @@ const DailyCashManagement = () => {
                         step="0.01"
                         value={expenseForm.amount}
                         onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 text-lg"
+                        placeholder="0.00"
                         required
                       />
                     </div>
@@ -1290,7 +1291,7 @@ const DailyCashManagement = () => {
                       <select
                         value={expenseForm.category}
                         onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 text-lg"
                       >
                         <option value="OFFICE_SUPPLIES">Office Supplies</option>
                         <option value="MEDICAL_SUPPLIES">Medical Supplies</option>
@@ -1303,12 +1304,12 @@ const DailyCashManagement = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700">Description</label>
-                      <input
-                        type="text"
+                      <label className="block text-sm font-medium text-gray-700">Description / Reason</label>
+                      <textarea
                         value={expenseForm.description}
                         onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 text-lg min-h-[100px]"
+                        placeholder="Enter description or reason..."
                         required
                       />
                     </div>
@@ -1319,7 +1320,8 @@ const DailyCashManagement = () => {
                         type="text"
                         value={expenseForm.vendor}
                         onChange={(e) => setExpenseForm({ ...expenseForm, vendor: e.target.value })}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 text-lg"
+                        placeholder="Vendor name (optional)"
                       />
                     </div>
 

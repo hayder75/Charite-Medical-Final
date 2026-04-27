@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed, Beaker, Printer, Trash2, Edit2, X, Check, Calendar, ChevronRight, ChevronDown } from 'lucide-react';
+import { AlertCircle, Activity, Image, Smile, Scan, Stethoscope, Pill, FileText, ArrowLeft, Save, User, TestTube, Eye, Download, Clock, CheckCircle, AlertTriangle, Package, Bed } from 'lucide-react';
 import { getImageUrl } from '../../utils/imageUrl';
-import { checkValueInNormalRange } from '../../utils/normalRangeParser';
 import DentalChart from '../../components/dental/DentalChart';
 import DentalChartDisplay from '../../components/common/DentalChartDisplay';
 import DiagnosisNotes from '../../components/doctor/DiagnosisNotes';
@@ -20,233 +19,31 @@ import EmergencyDrugOrdering from '../../components/doctor/EmergencyDrugOrdering
 import ProcedureOrdering from '../../components/doctor/ProcedureOrdering';
 import MaterialNeedsOrdering from '../../components/nurse/MaterialNeedsOrdering';
 import AccommodationTab from '../../components/doctor/AccommodationTab';
-import CompoundPrescriptionBuilder from '../../components/doctor/CompoundPrescriptionBuilder';
+import ComprehensivePatientHistory from '../../components/doctor/ComprehensivePatientHistory';
 import Layout from '../../components/common/Layout';
-import {
-  DEFAULT_DOCTOR_WORKSPACE_CONFIG,
-  getAllowedDoctorTabs,
-  getLocalDateInputValue,
-  normalizeDoctorWorkspaceConfig
-} from '../../utils/doctorWorkspace';
-
-const getConsultationCacheKey = (doctorScope, visitId) => `doctor-consultation-cache:${doctorScope || 'unknown'}:${visitId || 'unknown'}`;
-
-const NOTE_FIELDS = [
-  { key: 'chiefComplaint', label: 'Chief Complaint' },
-  { key: 'historyOfPresentIllness', label: 'History of Present Illness' },
-  { key: 'pastMedicalHistory', label: 'Past Medical History' },
-  { key: 'allergicHistory', label: 'Allergic History' },
-  { key: 'physicalExamination', label: 'Physical Examination' },
-  { key: 'investigationFindings', label: 'Investigation Findings' },
-  { key: 'assessmentAndDiagnosis', label: 'Assessment & Diagnosis' },
-  { key: 'treatmentPlan', label: 'Treatment Plan' },
-  { key: 'treatmentGiven', label: 'Treatment Given' },
-  { key: 'medicationIssued', label: 'Medication Issued' },
-  { key: 'additional', label: 'Additional Notes' },
-  { key: 'prognosis', label: 'Prognosis' }
-];
-const createInitialDoctorTriageForm = () => ({
-  bloodPressure: '',
-  temperature: '',
-  heartRate: '',
-  height: '',
-  weight: '',
-  oxygenSaturation: '',
-  condition: '',
-  notes: '',
-  generalAppearanceStatus: 'NOT_ASSESSED',
-  generalAppearance: '',
-  skinStatus: 'NOT_ASSESSED',
-  skinBodyRegions: [],
-  skinFindings: '',
-  headAndNeckStatus: 'NOT_ASSESSED',
-  headAndNeck: '',
-  cardiovascularStatus: 'NOT_ASSESSED',
-  cardiovascularExam: '',
-  respiratoryStatus: 'NOT_ASSESSED',
-  respiratoryExam: '',
-  abdominalStatus: 'NOT_ASSESSED',
-  abdominalExam: '',
-  extremitiesStatus: 'NOT_ASSESSED',
-  extremities: '',
-  neurologicalStatus: 'NOT_ASSESSED',
-  neurologicalExam: '',
-  doctorAlertFlag: false,
-  doctorAlertSummary: ''
-});
-
-const formatAssessmentText = (status, value, extras = []) => {
-  const cleanValue = (value || '').trim();
-  const cleanExtras = extras.map((item) => String(item || '').trim()).filter(Boolean);
-  const hasAnyContent = cleanValue || cleanExtras.length > 0;
-
-  if (!hasAnyContent && (!status || status === 'NOT_ASSESSED')) return '';
-
-  const lines = [];
-  if (status && status !== 'NOT_ASSESSED') {
-    lines.push(`Status: ${status}`);
-  }
-  cleanExtras.forEach((item) => lines.push(item));
-  if (cleanValue) {
-    lines.push(cleanValue);
-  }
-
-  return lines.join('\n');
-};
-
-const NoteDisplayWithEdit = ({ note, visitId, onUpdate }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editData, setEditData] = useState({});
-  const [isSaving, setIsSaving] = useState(false);
-
-  // utility to strip HTML tags so textareas don’t show `<p>` wrappers etc.
-  const stripHtml = (html) => {
-    if (!html) return '';
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return tmp.textContent || tmp.innerText || '';
-  };
-
-  useEffect(() => {
-    if (note) {
-      // When we enter edit mode we don't want to show raw HTML tags such as
-      // <p> that may have been stored by the rich-text editor.  Strip any
-      // HTML before putting values into the controlled textarea.
-      setEditData({
-        chiefComplaint: stripHtml(note.chiefComplaint || ''),
-        historyOfPresentIllness: stripHtml(note.historyOfPresentIllness || ''),
-        pastMedicalHistory: stripHtml(note.pastMedicalHistory || ''),
-        allergicHistory: stripHtml(note.allergicHistory || ''),
-        physicalExamination: stripHtml(note.physicalExamination || ''),
-        investigationFindings: stripHtml(note.investigationFindings || ''),
-        assessmentAndDiagnosis: stripHtml(note.assessmentAndDiagnosis || ''),
-        treatmentPlan: stripHtml(note.treatmentPlan || ''),
-        treatmentGiven: stripHtml(note.treatmentGiven || ''),
-        medicationIssued: stripHtml(note.medicationIssued || ''),
-        additional: stripHtml(note.additional || ''),
-        prognosis: stripHtml(note.prognosis || '')
-      });
-    }
-  }, [note]);
-
-  const handleSave = async () => {
-    try {
-      setIsSaving(true);
-      await api.put(`/doctors/visits/${visitId}/diagnosis-notes/${note.id}`, { notes: editData });
-      toast.success('Notes updated successfully');
-      setIsEditing(false);
-      if (onUpdate) onUpdate(editData);
-    } catch (error) {
-      console.error('Error updating notes:', error);
-      toast.error('Failed to update notes');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const renderField = (key, label) => {
-    const value = isEditing ? editData[key] : note[key];
-    const displayValue = stripHtml(value);
-
-    if (!displayValue) return null;
-
-    return (
-      <div key={key} className="mb-2">
-        <span className="font-medium text-gray-700">{label}: </span>
-        {isEditing ? (
-          <textarea
-            value={stripHtml(editData[key])}
-            onChange={(e) => setEditData(prev => ({ ...prev, [key]: e.target.value }))}
-            className="w-full mt-1 p-2 border rounded text-sm"
-            rows={2}
-          />
-        ) : (
-          <span className="text-gray-600">{displayValue}</span>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div className="p-4 border rounded-lg shadow-sm" style={{ borderColor: '#E5E7EB', backgroundColor: '#F8FAFC' }}>
-      <div className="flex justify-between items-start mb-3">
-        <p className="text-xs text-gray-500 font-medium">
-          Recorded by {note.doctor?.fullname || 'Unknown'} - {new Date(note.createdAt).toLocaleString()}
-          {note.updatedAt && ` (Updated: ${new Date(note.updatedAt).toLocaleString()})`}
-        </p>
-        {!isEditing ? (
-          <button
-            onClick={() => setIsEditing(true)}
-            className="flex items-center px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-          >
-            <Edit2 className="h-3 w-3 mr-1" /> Edit
-          </button>
-        ) : (
-          <div className="flex space-x-2">
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="flex items-center px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50"
-            >
-              <Check className="h-3 w-3 mr-1" /> {isSaving ? 'Saving...' : 'Save'}
-            </button>
-            <button
-              onClick={() => setIsEditing(false)}
-              className="flex items-center px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-            >
-              <X className="h-3 w-3 mr-1" /> Cancel
-            </button>
-          </div>
-        )}
-      </div>
-
-      {NOTE_FIELDS.map(field => renderField(field.key, field.label))}
-
-      {NOTE_FIELDS.every(field => !stripHtml(note[field.key])) && (
-        <p className="text-sm text-gray-500 italic">No notes recorded</p>
-      )}
-    </div>
-  );
-};
 
 const PatientConsultationPage = () => {
   const { visitId } = useParams();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const { user: currentUser, loading: authLoading } = useAuth();
-  const modeParam = String(searchParams.get('mode') || '').toLowerCase();
-  const consultationMode = modeParam === 'completed'
-    ? 'completed'
-    : modeParam === 'triage'
-      ? 'triage'
-      : 'active';
-  const isCompletedMode = consultationMode === 'completed';
   const [loading, setLoading] = useState(true);
   const [visit, setVisit] = useState(null);
-  const [allVitals, setAllVitals] = useState([]); // All vitals for this visit
+  const [vitals, setVitals] = useState(null);
   const [activeTab, setActiveTab] = useState('vitals');
   const [dentalRecord, setDentalRecord] = useState(null);
   const dentalChartRef = useRef(null);
-  const [workspaceConfig, setWorkspaceConfig] = useState(DEFAULT_DOCTOR_WORKSPACE_CONFIG);
-  const [workspaceProfile, setWorkspaceProfile] = useState('general');
-
-  // Get latest vitals and nurse vitals for display
-  const nurseVitals = allVitals.find(v => v.recordedByRole === 'NURSE');
-  const doctorVitals = allVitals.filter(v => v.recordedByRole === 'DOCTOR');
-  const latestVitals = allVitals.length > 0 ? allVitals[0] : null;
-
-  // Patient History state
-  const [patientHistory, setPatientHistory] = useState(null);
-  const [patientHistoryLoading, setPatientHistoryLoading] = useState(false);
-  const [selectedHistoryVisitId, setSelectedHistoryVisitId] = useState(null);
-  const [historyMedicationPrintDate, setHistoryMedicationPrintDate] = useState(() => getLocalDateInputValue());
-  const [historyCompoundPrintDate, setHistoryCompoundPrintDate] = useState(() => getLocalDateInputValue());
-  const [historyTab, setHistoryTab] = useState('visits');
-  const [showPatientSummary, setShowPatientSummary] = useState(true);
-  const [visitDetailTab, setVisitDetailTab] = useState('summary'); // summary, vitals, labs, radiology, medications, procedures, notes, images
 
   // Triage form state
-  const [triageForm, setTriageForm] = useState(createInitialDoctorTriageForm);
+  const [triageForm, setTriageForm] = useState({
+    bloodPressure: '',
+    temperature: '',
+    heartRate: '',
+    height: '',
+    weight: '',
+    oxygenSaturation: '',
+    condition: '',
+    notes: ''
+  });
   const [recordingTriage, setRecordingTriage] = useState(false);
 
   // ImageViewer state
@@ -258,7 +55,6 @@ const PatientConsultationPage = () => {
   const [showCompleteConfirmModal, setShowCompleteConfirmModal] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completingVisit, setCompletingVisit] = useState(false);
-  const [countAsMedicalTreated, setCountAsMedicalTreated] = useState(false);
   const [completeForm, setCompleteForm] = useState({
     needsAppointment: false,
     appointmentDate: '',
@@ -296,87 +92,29 @@ const PatientConsultationPage = () => {
     return result;
   }, [currentUser]);
 
-  const isDermatologyDoctor = useMemo(() => {
-    const qualifications = Array.isArray(currentUser?.qualifications)
-      ? currentUser.qualifications.map((q) => String(q || '').toUpperCase())
-      : [];
-    return currentUser?.role === 'DERMATOLOGY' || qualifications.some((q) => q.includes('DERM'));
-  }, [currentUser]);
-
-  const getDoctorQualificationLabel = (doctorData) => {
-    const role = String(doctorData?.role || '').toUpperCase();
-    const qualifications = Array.isArray(doctorData?.qualifications)
-      ? doctorData.qualifications
-      : [];
-    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
-
-    const isHealthOfficer =
-      role.includes('HEALTH_OFFICER') ||
-      role === 'HO' ||
-      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
-
-    if (isHealthOfficer) {
-      return 'Health Officer (HO)';
-    }
-
-    if (role.includes('DERM') || normalizedQualifications.some((q) => q.includes('DERM'))) {
-      return 'Dermato-venereologist';
-    }
-
-    return qualifications.join(', ') || 'General Practitioner';
-  };
-
-  const escapeHtml = (value) => String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-  const doctorCacheScope = useMemo(
-    () => currentUser?.id || currentUser?.userId || currentUser?.username || 'unknown',
-    [currentUser]
-  );
-
-  const consultationCacheKey = useMemo(
-    () => getConsultationCacheKey(doctorCacheScope, visitId),
-    [doctorCacheScope, visitId]
-  );
-
-  const allowedTabIds = useMemo(
-    () => new Set(getAllowedDoctorTabs(workspaceConfig, workspaceProfile, consultationMode)),
-    [consultationMode, workspaceConfig, workspaceProfile]
-  );
-  const canAccessDentalFeatures = useMemo(
-    () => isDentalSpecialist || allowedTabIds.has('dental') || allowedTabIds.has('dental-services'),
-    [allowedTabIds, isDentalSpecialist]
-  );
-
   // Memoize tabs array to prevent recreation on every render
-  // Order: triage → vitals → patient-history → images → dental chart → dental services (only for dentists) → diagnosis notes → medication → emergency drugs → material needs → lab → radiology → nurse services
+  // Order: triage → vitals → patient-history → images → dental chart → dental services (only for dentists) → medications → emergency drugs → material needs → lab → radiology → nurse services → accommodation → diagnosis notes
   const tabs = useMemo(() => {
     const tabsArray = [
       { id: 'triage', label: 'Triage', icon: Stethoscope },
       { id: 'vitals', label: 'Vitals & History', icon: Activity },
-      { id: 'patient-history', label: 'Patient History', icon: User },
+      { id: 'patient-history', label: 'Medical History', icon: User },
       { id: 'images', label: 'Attached Images', icon: Image },
       { id: 'procedures', label: 'Procedures', icon: Activity },
-      { id: 'dental', label: 'Dental Chart', icon: Smile },
-      { id: 'dental-services', label: 'Dental Services', icon: Smile },
-      { id: 'notes', label: 'Diagnosis Notes', icon: FileText },
+      ...(isDentalSpecialist ? [{ id: 'dental', label: 'Dental Chart', icon: Smile }] : []),
+      ...(isDentalSpecialist ? [{ id: 'dental-services', label: 'Dental Services', icon: Smile }] : []), // Only show for dental specialists
       { id: 'medications', label: 'Medications', icon: Pill },
-      { id: 'compound-prescription', label: 'Compound Rx', icon: Beaker },
       { id: 'emergency-drugs', label: 'Emergency Drugs', icon: AlertTriangle },
       { id: 'material-needs', label: 'Material Needs', icon: Package },
       { id: 'lab', label: 'Lab Orders', icon: TestTube },
       { id: 'radiology', label: 'Radiology Orders', icon: Scan },
       { id: 'nurse-services', label: 'Nurse Services', icon: Stethoscope },
-      { id: 'accommodation', label: 'Accommodation', icon: Bed }
+      { id: 'accommodation', label: 'Accommodation', icon: Bed },
+      { id: 'notes', label: 'Diagnosis Notes', icon: FileText }
     ];
-    const visibleTabs = tabsArray.filter((tab) => allowedTabIds.has(tab.id));
-    console.debug('[Consultation] tabs array created:', visibleTabs.map(t => t.id));
-    return visibleTabs;
-  }, [allowedTabIds]);
+    console.debug('[Consultation] tabs array created:', tabsArray.map(t => t.id));
+    return tabsArray;
+  }, [isDentalSpecialist]);
 
   // Debug: track tab changes and visit load
   useEffect(() => {
@@ -387,48 +125,6 @@ const PatientConsultationPage = () => {
     console.debug('[Consultation] useEffect 2 - fetchVisitData called for visitId:', visitId);
     fetchVisitData();
   }, [visitId]);
-
-  useEffect(() => {
-    const fetchWorkspaceSettings = async () => {
-      try {
-        const response = await api.get('/doctors/workspace-settings');
-        setWorkspaceConfig(normalizeDoctorWorkspaceConfig(response.data.workspaceConfig));
-        setWorkspaceProfile(response.data.profile || 'general');
-      } catch (error) {
-        console.error('Error fetching consultation workspace settings:', error);
-      }
-    };
-
-    fetchWorkspaceSettings();
-  }, []);
-
-  // Hydrate from session cache first to keep consultation data visible on browser refresh.
-  useEffect(() => {
-    try {
-      if (!visitId) return;
-
-      const candidateKeys = [
-        consultationCacheKey,
-        getConsultationCacheKey('unknown', visitId),
-        getConsultationCacheKey(currentUser?.id, visitId)
-      ].filter(Boolean);
-
-      const raw = candidateKeys.map((k) => sessionStorage.getItem(k)).find(Boolean);
-      if (!raw) return;
-
-      const cached = JSON.parse(raw);
-      if (!cached?.visit) return;
-
-      setVisit(cached.visit);
-      setAllVitals(Array.isArray(cached.vitals) ? cached.vitals : []);
-      if (cached.dentalRecord) {
-        setDentalRecord(cached.dentalRecord);
-      }
-      setLoading(false);
-    } catch (cacheError) {
-      console.warn('[Consultation] Failed to restore session cache:', cacheError);
-    }
-  }, [consultationCacheKey, currentUser?.id, visitId]);
 
   // If current activeTab is not available for this user, switch to the first available tab
   useEffect(() => {
@@ -442,57 +138,35 @@ const PatientConsultationPage = () => {
   }, [currentUser, activeTab, tabs]);
 
   // Pre-fill triage form when triage tab is clicked (only then, not on page load)
-  // Pre-fill with nurse vitals so doctor can see what was recorded
   useEffect(() => {
-    if (activeTab === 'triage' && nurseVitals) {
-      // Pre-fill form with nurse vitals for reference
+    if (activeTab === 'triage' && vitals) {
+      // Pre-fill form with existing vitals for editing
       setTriageForm({
-        ...createInitialDoctorTriageForm(),
-        bloodPressure: nurseVitals.bloodPressure || '',
-        temperature: nurseVitals.temperature ? nurseVitals.temperature.toString() : '',
-        heartRate: nurseVitals.heartRate ? nurseVitals.heartRate.toString() : '',
-        height: nurseVitals.height ? nurseVitals.height.toString() : '',
-        weight: nurseVitals.weight ? nurseVitals.weight.toString() : '',
-        oxygenSaturation: nurseVitals.oxygenSaturation || nurseVitals.spo2 ? (nurseVitals.oxygenSaturation || nurseVitals.spo2).toString() : '',
-        condition: nurseVitals.condition || '',
-        notes: nurseVitals.notes || '',
-        generalAppearance: nurseVitals.generalAppearance || '',
-        headAndNeck: nurseVitals.headAndNeck || '',
-        cardiovascularExam: nurseVitals.cardiovascularExam || '',
-        respiratoryExam: nurseVitals.respiratoryExam || '',
-        abdominalExam: nurseVitals.abdominalExam || '',
-        extremities: nurseVitals.extremities || '',
-        neurologicalExam: nurseVitals.neurologicalExam || ''
+        bloodPressure: vitals.bloodPressure || '',
+        temperature: vitals.temperature ? vitals.temperature.toString() : '',
+        heartRate: vitals.heartRate ? vitals.heartRate.toString() : '',
+        height: vitals.height ? vitals.height.toString() : '',
+        weight: vitals.weight ? vitals.weight.toString() : '',
+        oxygenSaturation: vitals.oxygenSaturation || vitals.spo2 ? (vitals.oxygenSaturation || vitals.spo2).toString() : '',
+        condition: vitals.condition || '',
+        notes: vitals.notes || ''
       });
-    } else if (activeTab === 'triage' && !nurseVitals) {
-      // Reset form if no nurse vitals exist
-      setTriageForm(createInitialDoctorTriageForm());
+    } else if (activeTab === 'triage' && !vitals) {
+      // Reset form if no vitals exist
+      setTriageForm({
+        bloodPressure: '',
+        temperature: '',
+        heartRate: '',
+        height: '',
+        weight: '',
+        oxygenSaturation: '',
+        condition: '',
+        notes: ''
+      });
     }
-  }, [activeTab, nurseVitals]);
+  }, [activeTab, vitals]);
 
-  // Fetch patient history when patient-history tab is clicked
-  useEffect(() => {
-    if (activeTab === 'patient-history' && visit?.patient?.id && !patientHistory) {
-      fetchPatientHistory(visit.patient.id);
-    }
-  }, [activeTab, visit?.patient?.id]);
 
-  const fetchPatientHistory = async (patientId) => {
-    try {
-      setPatientHistoryLoading(true);
-      const response = await api.get(`/doctors/patient-history/${patientId}`);
-      setPatientHistory(response.data);
-      // Auto-select the first visit if available
-      if (response.data?.visits && response.data.visits.length > 0) {
-        setSelectedHistoryVisitId(response.data.visits[0].id);
-      }
-    } catch (error) {
-      console.error('Error fetching patient history:', error);
-      toast.error('Failed to fetch patient history');
-    } finally {
-      setPatientHistoryLoading(false);
-    }
-  };
 
   const fetchVisitData = async () => {
     try {
@@ -510,38 +184,14 @@ const PatientConsultationPage = () => {
         return;
       }
 
-      const normalizedVisit = {
-        ...response.data,
-        // Protect against occasional partial payloads on reload where patient relation may be missing.
-        patient: response.data?.patient || visit?.patient || null
-      };
+      setVisit(response.data);
 
-      // If still missing patient object, fetch patient summary and attach it before render/cache.
-      if (!normalizedVisit.patient && normalizedVisit.patientId) {
-        try {
-          const historyRes = await api.get(`/doctors/patient-history/${normalizedVisit.patientId}`);
-          if (historyRes?.data?.patient) {
-            normalizedVisit.patient = {
-              ...historyRes.data.patient,
-              mobile: historyRes.data.patient.phone || historyRes.data.patient.mobile
-            };
-          }
-        } catch (historyErr) {
-          console.warn('[Consultation] Could not hydrate patient from history:', historyErr?.message || historyErr);
-        }
-      }
-
-      setVisit(normalizedVisit);
-
-      // Set all vitals from the visit data (already included)
-      // Sort by createdAt descending to get most recent first
-      if (normalizedVisit.vitals && normalizedVisit.vitals.length > 0) {
-        const sortedVitals = [...normalizedVisit.vitals].sort((a, b) =>
-          new Date(b.createdAt) - new Date(a.createdAt)
-        );
-        setAllVitals(sortedVitals);
+      // Set vitals from the visit data (already included)
+      if (response.data.vitals && response.data.vitals.length > 0) {
+        const latestVitals = response.data.vitals[0]; // Most recent vitals
+        setVitals(latestVitals);
       } else {
-        setAllVitals([]);
+        setVitals(null);
       }
 
       // Don't auto-fill triage form here - let user fill it manually when they click the triage tab
@@ -550,7 +200,7 @@ const PatientConsultationPage = () => {
       // Fetch dental record if user is a dentist
       if (currentUser?.qualifications?.includes('Dentist')) {
         try {
-          const dentalResponse = await api.get(`/dental/records/${normalizedVisit.patientId}/${visitId}`);
+          const dentalResponse = await api.get(`/dental/records/${response.data.patientId}/${visitId}`);
           setDentalRecord(dentalResponse.data.dentalRecord);
         } catch (error) {
           if (error.response?.status === 404) {
@@ -561,22 +211,6 @@ const PatientConsultationPage = () => {
             // Don't show error toast for dental records as 404 is expected
           }
         }
-      }
-
-      // Persist latest consultation snapshot per doctor+visit to survive refresh.
-      try {
-        const snapshot = {
-          visit: normalizedVisit,
-          vitals: normalizedVisit?.vitals || [],
-          dentalRecord,
-          savedAt: Date.now()
-        };
-        // Persist only meaningful snapshots to avoid overwriting good cache with patient-less payloads.
-        if (snapshot.visit?.id && snapshot.visit?.patient) {
-          sessionStorage.setItem(consultationCacheKey, JSON.stringify(snapshot));
-        }
-      } catch (cacheError) {
-        console.warn('[Consultation] Failed to persist cache:', cacheError);
       }
 
     } catch (error) {
@@ -591,12 +225,7 @@ const PatientConsultationPage = () => {
         toast.error('Access denied to this visit');
         navigate('/doctor/dashboard');
       } else {
-        // Keep current cached data on transient failures instead of showing blank N/A state.
-        if (!visit) {
-          toast.error('Failed to load patient data');
-        } else {
-          toast.error('Network issue: showing last loaded patient data');
-        }
+        toast.error('Failed to load patient data');
       }
     } finally {
       setLoading(false);
@@ -635,61 +264,8 @@ const PatientConsultationPage = () => {
       if (triageForm.condition) vitalsPayload.condition = triageForm.condition;
       if (triageForm.notes) vitalsPayload.notes = triageForm.notes;
 
-      const generalAppearanceText = formatAssessmentText(
-        triageForm.generalAppearanceStatus,
-        triageForm.generalAppearance
-      );
-      const skinAndExtremitiesText = formatAssessmentText(
-        triageForm.skinStatus,
-        triageForm.skinFindings,
-        [
-          triageForm.skinBodyRegions?.length
-            ? `Body Regions: ${triageForm.skinBodyRegions.join(', ')}`
-            : '',
-          formatAssessmentText(triageForm.extremitiesStatus, triageForm.extremities)
-        ]
-      );
-      const headAndNeckText = formatAssessmentText(
-        triageForm.headAndNeckStatus,
-        triageForm.headAndNeck
-      );
-      const cardiovascularText = formatAssessmentText(
-        triageForm.cardiovascularStatus,
-        triageForm.cardiovascularExam
-      );
-      const respiratoryText = formatAssessmentText(
-        triageForm.respiratoryStatus,
-        triageForm.respiratoryExam
-      );
-      const abdominalText = formatAssessmentText(
-        triageForm.abdominalStatus,
-        triageForm.abdominalExam
-      );
-      const neuroText = formatAssessmentText(
-        triageForm.neurologicalStatus,
-        triageForm.neurologicalExam
-      );
-
-      if (generalAppearanceText) vitalsPayload.generalAppearance = generalAppearanceText;
-      if (headAndNeckText) vitalsPayload.headAndNeck = headAndNeckText;
-      if (cardiovascularText) vitalsPayload.cardiovascularExam = cardiovascularText;
-      if (respiratoryText) vitalsPayload.respiratoryExam = respiratoryText;
-      if (abdominalText) vitalsPayload.abdominalExam = abdominalText;
-      if (skinAndExtremitiesText) vitalsPayload.extremities = skinAndExtremitiesText;
-      if (neuroText) vitalsPayload.neurologicalExam = neuroText;
-
-      if (triageForm.doctorAlertFlag || triageForm.doctorAlertSummary?.trim()) {
-        const existingNotes = vitalsPayload.notes ? `${vitalsPayload.notes}\n\n` : '';
-        const doctorAlertBlock = [
-          '[Doctor Alert]',
-          `Flagged: ${triageForm.doctorAlertFlag ? 'YES' : 'NO'}`,
-          `Summary: ${(triageForm.doctorAlertSummary || '').trim() || 'Not provided'}`
-        ].join('\n');
-        vitalsPayload.notes = `${existingNotes}${doctorAlertBlock}`;
-      }
-
       await api.post('/nurses/vitals', vitalsPayload);
-      toast.success('Doctor vitals added successfully');
+      toast.success('Triage vitals recorded successfully');
 
       // Refresh visit data to show updated vitals (this will pre-fill the form with saved values for editing)
       await fetchVisitData();
@@ -735,82 +311,50 @@ const PatientConsultationPage = () => {
     // Only PAID/QUEUED/IN_PROGRESS orders block completion. UNPAID orders do not.
     const activeStatuses = ['PAID', 'QUEUED', 'IN_PROGRESS'];
 
-    const terminalStatuses = ['COMPLETED', 'CANCELLED'];
-
-    const isPendingBatchOrder = (order) => {
-      if (!order || !['LAB', 'RADIOLOGY', 'PROCEDURE'].includes(order.type)) {
-        return false;
+    const pendingBatchLabOrders = (visit.batchOrders || []).filter(order => {
+      if (order.type !== 'LAB') return false;
+      // Check if batch order itself is active
+      if (activeStatuses.includes(order.status)) {
+        return true;
       }
-
-      if (terminalStatuses.includes(order.status)) {
-        return false;
-      }
-
-      const hasServices = Array.isArray(order.services) && order.services.length > 0;
-      const hasLinkedLabTests = Array.isArray(order.labTestOrders) && order.labTestOrders.length > 0;
-      const hasDetailedLabResults = Array.isArray(order.detailedLabResults) && order.detailedLabResults.length > 0;
-      const hasRadiologyResults = Array.isArray(order.radiologyResults) && order.radiologyResults.length > 0;
-      const isLabPlaceholder =
-        order.type === 'LAB' &&
-        !hasServices &&
-        /lab tests ordered by doctor/i.test(order.instructions || '');
-
-      if (hasLinkedLabTests) {
-        return order.labTestOrders.some((testOrder) => {
-          const hasResult = Array.isArray(testOrder.results) && testOrder.results.length > 0;
-          return activeStatuses.includes(testOrder.status) && !hasResult;
-        });
-      }
-
-      if (hasDetailedLabResults || hasRadiologyResults) {
-        return false;
-      }
-
-      if (hasServices) {
-        return (order.services || []).some((service) => activeStatuses.includes(service.status));
-      }
-
-      if (isLabPlaceholder) {
-        return false;
-      }
-
-      return activeStatuses.includes(order.status);
-    };
-
-    const pendingBatchLabOrders = (visit.batchOrders || []).filter(
-      (order) => order.type === 'LAB' && isPendingBatchOrder(order)
-    );
-
-    const pendingBatchRadiologyOrders = (visit.batchOrders || []).filter(
-      (order) => order.type === 'RADIOLOGY' && isPendingBatchOrder(order)
-    );
-
-    const pendingBatchProcedureOrders = (visit.batchOrders || []).filter(
-      (order) => order.type === 'PROCEDURE' && isPendingBatchOrder(order)
-    );
-
-    // Check legacy lab orders - treat submitted results as completed even if status is stale.
-    const pendingLabOrders = (visit.labOrders || []).filter((order) => {
-      const hasResult = Array.isArray(order.labResults) && order.labResults.length > 0;
-      return activeStatuses.includes(order.status) && !hasResult;
+      // Check if any service within the batch order is active
+      const hasActiveServices = (order.services || []).some(service =>
+        activeStatuses.includes(service.status)
+      );
+      return hasActiveServices;
     });
 
-    // Check legacy radiology orders - treat submitted results as completed even if status is stale.
-    const pendingRadiologyOrders = (visit.radiologyOrders || []).filter((order) => {
-      const hasResult = Array.isArray(order.radiologyResults) && order.radiologyResults.length > 0;
-      return activeStatuses.includes(order.status) && !hasResult;
+    const pendingBatchRadiologyOrders = (visit.batchOrders || []).filter(order => {
+      if (order.type !== 'RADIOLOGY') return false;
+      // Check if batch order itself is active
+      if (activeStatuses.includes(order.status)) {
+        return true;
+      }
+      // Check if any service within the batch order is active
+      const hasActiveServices = (order.services || []).some(service =>
+        activeStatuses.includes(service.status)
+      );
+      return hasActiveServices;
     });
 
-    // Check new lab test orders system - results override stale status.
-    const pendingLabTestOrders = (visit.labTestOrders || []).filter((order) => {
-      const hasResult = Array.isArray(order.results) && order.results.length > 0;
-      return activeStatuses.includes(order.status) && !hasResult;
-    });
+    // Check legacy lab orders
+    const pendingLabOrders = (visit.labOrders || []).filter(order =>
+      activeStatuses.includes(order.status)
+    );
+
+    // Check legacy radiology orders
+    const pendingRadiologyOrders = (visit.radiologyOrders || []).filter(order =>
+      activeStatuses.includes(order.status)
+    );
+
+    // Check new lab test orders system
+    const pendingLabTestOrders = (visit.labTestOrders || []).filter(order =>
+      activeStatuses.includes(order.status)
+    );
 
     // If any orders are actively being processed, block completion
     return pendingBatchLabOrders.length > 0 ||
       pendingBatchRadiologyOrders.length > 0 ||
-      pendingBatchProcedureOrders.length > 0 ||
       pendingLabOrders.length > 0 ||
       pendingRadiologyOrders.length > 0 ||
       pendingLabTestOrders.length > 0;
@@ -822,11 +366,7 @@ const PatientConsultationPage = () => {
 
   // Complete Visit Functions
   const handleCompleteVisit = () => {
-    if (isCompletedMode) {
-      return;
-    }
     // Show custom confirmation modal
-    setCountAsMedicalTreated(false);
     setShowCompleteConfirmModal(true);
   };
 
@@ -852,7 +392,6 @@ const PatientConsultationPage = () => {
         diagnosisDetails: '', // Will be extracted from diagnosis notes
         instructions: '', // Will be extracted from diagnosis notes
         finalNotes: '', // Will be extracted from diagnosis notes
-        countAsMedicalTreated: isDermatologyDoctor ? countAsMedicalTreated : false,
         needsAppointment: completeForm.needsAppointment,
         appointmentDate: completeForm.appointmentDate,
         appointmentTime: completeForm.appointmentTime,
@@ -875,404 +414,6 @@ const PatientConsultationPage = () => {
     } finally {
       setCompletingVisit(false);
     }
-  };
-
-  // Delete medication order
-  const handleDeleteMedication = async (medicationId) => {
-    if (!window.confirm('Are you sure you want to delete this medication? This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      await api.delete(`/doctors/medication-order/${medicationId}`);
-      toast.success('Medication deleted successfully');
-
-      // Refresh the visit data
-      const response = await api.get(`/doctors/visits/${visitId}`);
-      setVisit(response.data);
-    } catch (error) {
-      console.error('Error deleting medication:', error);
-      toast.error(error.response?.data?.error || 'Failed to delete medication');
-    }
-  };
-
-  const getPrintableDoctorData = (historyVisit) => {
-    return historyVisit?.doctor || visit?.doctor || currentUser || {};
-  };
-
-  const getPrintableDoctorName = (doctorData) => {
-    const rawName = String(
-      doctorData?.fullname || doctorData?.fullName || doctorData?.name || currentUser?.fullname || currentUser?.username || ''
-    ).trim();
-    if (!rawName) return 'Attending Doctor';
-
-    const role = String(doctorData?.role || '').toUpperCase();
-    const qualifications = Array.isArray(doctorData?.qualifications) ? doctorData.qualifications : [];
-    const normalizedQualifications = qualifications.map((q) => String(q || '').toUpperCase());
-    const isHealthOfficer =
-      role.includes('HEALTH_OFFICER') ||
-      role === 'HO' ||
-      normalizedQualifications.some((q) => q.includes('HEALTH OFFICER') || q.includes('HEALTH_OFFICER') || q === 'HO');
-
-    if (/^(dr|mr)\.?\s+/i.test(rawName)) return rawName;
-    return isHealthOfficer ? `Mr. ${rawName}` : `Dr. ${rawName}`;
-  };
-
-  const printHistoryMedicationReprint = (historyVisit, printDate) => {
-    if (!historyVisit?.medicationOrders?.length) {
-      toast.error('No medications found for selected date');
-      return;
-    }
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      toast.error('Popup blocked! Please allow popups for this site.');
-      return;
-    }
-
-    const patientData = patientHistory?.patient || visit?.patient || {};
-  const doctorData = getPrintableDoctorData(historyVisit);
-  const doctorName = getPrintableDoctorName(doctorData);
-    const doctorQualification = getDoctorQualificationLabel(doctorData);
-    const visitDate = new Date(historyVisit.createdAt || historyVisit.updatedAt || Date.now());
-  const printedAt = printDate ? new Date(`${printDate}T12:00:00`) : new Date();
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Medication Reprint - ${escapeHtml(patientData.name || 'Patient')}</title>
-          <style>
-            @media print { @page { size: A6; margin: 0 !important; } .no-print { display: none !important; } }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 16px; color: #111827; background: #f8fafc; }
-            .sheet { width: 105mm; min-height: 148mm; margin: 0 auto; background: #fff; padding: 8mm; box-sizing: border-box; box-shadow: 0 8px 18px rgba(15,23,42,0.15); }
-            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #1d4ed8; padding-bottom: 8px; margin-bottom: 10px; }
-            .title { font-size: 14px; font-weight: 700; text-transform: uppercase; color: #1e3a8a; }
-            .meta { font-size: 10px; color: #475569; text-align: right; }
-            .patient { font-size: 11px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; margin-bottom: 10px; }
-            .item { border-bottom: 1px dashed #cbd5e1; padding: 6px 0; }
-            .name { font-size: 12px; font-weight: 700; }
-            .instruction { font-size: 11px; color: #334155; margin-top: 3px; }
-            .footer { margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 10px; display: flex; justify-content: space-between; }
-            .no-print { text-align: center; margin-bottom: 12px; }
-            .no-print button { border: none; background: #2563eb; color: white; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
-          </style>
-        </head>
-        <body>
-          <div class="no-print"><button onclick="window.print()">Print Refill Copy</button></div>
-          <div class="sheet">
-            <div class="header">
-              <div class="title">Medication Reprint</div>
-              <div class="meta">Visit: ${visitDate.toLocaleDateString()}<br>Reprint: ${printedAt.toLocaleString()}</div>
-            </div>
-            <div class="patient">
-              <div><strong>Patient:</strong> ${escapeHtml(String(patientData.name || 'N/A').toUpperCase())}</div>
-              <div><strong>Card No:</strong> #${escapeHtml(patientData.id || 'N/A')}</div>
-              <div><strong>Visit ID:</strong> #${escapeHtml(historyVisit.visitUid || historyVisit.id)}</div>
-            </div>
-            ${historyVisit.medicationOrders.map((med, idx) => {
-              const name = escapeHtml(med.name || 'Medication');
-              const instruction = escapeHtml((med.instructionText || med.instructions || '').trim());
-              return `
-                <div class="item">
-                  <div class="name">${idx + 1}. ${name}</div>
-                  ${instruction ? `<div class="instruction">${instruction}</div>` : ''}
-                </div>
-              `;
-            }).join('')}
-            <div class="footer">
-              <div>
-                Prescribed by: <strong>${escapeHtml(doctorName)}</strong><br>
-                ${escapeHtml(doctorQualification)}
-              </div>
-              <div style="border-top: 1px solid #334155; padding-top: 4px; width: 96px; text-align: center;">Signature</div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-  };
-
-  const printHistoryCompoundReprint = (historyVisit, printDate) => {
-    if (!historyVisit?.compoundPrescriptions?.length) {
-      toast.error('No compound prescriptions found for selected date');
-      return;
-    }
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      toast.error('Popup blocked! Please allow popups for this site.');
-      return;
-    }
-
-    const patientData = patientHistory?.patient || visit?.patient || {};
-  const doctorData = getPrintableDoctorData(historyVisit);
-  const doctorName = getPrintableDoctorName(doctorData);
-    const doctorQualification = getDoctorQualificationLabel(doctorData);
-    const visitDate = new Date(historyVisit.createdAt || historyVisit.updatedAt || Date.now());
-  const printedAt = printDate ? new Date(`${printDate}T12:00:00`) : new Date();
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Compound Reprint - ${escapeHtml(patientData.name || 'Patient')}</title>
-          <style>
-            @media print { @page { size: A6; margin: 0 !important; } .no-print { display: none !important; } }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 16px; color: #111827; background: #f8fafc; }
-            .sheet { width: 105mm; min-height: 148mm; margin: 0 auto; background: #fff; padding: 8mm; box-sizing: border-box; box-shadow: 0 8px 18px rgba(15,23,42,0.15); }
-            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #1d4ed8; padding-bottom: 8px; margin-bottom: 10px; }
-            .title { font-size: 14px; font-weight: 700; text-transform: uppercase; color: #1e3a8a; }
-            .meta { font-size: 10px; color: #475569; text-align: right; }
-            .patient { font-size: 11px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; margin-bottom: 10px; }
-            .item { border-bottom: 1px dashed #cbd5e1; padding: 6px 0; }
-            .name { font-size: 12px; font-weight: 700; }
-            .detail { font-size: 11px; color: #334155; margin-top: 3px; white-space: pre-wrap; }
-            .footer { margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 10px; display: flex; justify-content: space-between; }
-            .no-print { text-align: center; margin-bottom: 12px; }
-            .no-print button { border: none; background: #2563eb; color: white; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
-          </style>
-        </head>
-        <body>
-          <div class="no-print"><button onclick="window.print()">Print Refill Copy</button></div>
-          <div class="sheet">
-            <div class="header">
-              <div class="title">Compound Rx Reprint</div>
-              <div class="meta">Visit: ${visitDate.toLocaleDateString()}<br>Reprint: ${printedAt.toLocaleString()}</div>
-            </div>
-            <div class="patient">
-              <div><strong>Patient:</strong> ${escapeHtml(String(patientData.name || 'N/A').toUpperCase())}</div>
-              <div><strong>Card No:</strong> #${escapeHtml(patientData.id || 'N/A')}</div>
-              <div><strong>Visit ID:</strong> #${escapeHtml(historyVisit.visitUid || historyVisit.id)}</div>
-            </div>
-            ${historyVisit.compoundPrescriptions.map((cp, idx) => {
-              const note = escapeHtml(cp.prescriptionText || cp.rawText || cp.instructions || '');
-              return `
-                <div class="item">
-                  <div class="name">${idx + 1}. ${escapeHtml(cp.referenceNumber || `Compound ${idx + 1}`)}</div>
-                  ${note ? `<div class="detail">${note}</div>` : ''}
-                </div>
-              `;
-            }).join('')}
-            <div class="footer">
-              <div>
-                Prescribed by: <strong>${escapeHtml(doctorName)}</strong><br>
-                ${escapeHtml(doctorQualification)}
-              </div>
-              <div style="border-top: 1px solid #334155; padding-top: 4px; width: 96px; text-align: center;">Signature</div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-  };
-
-  // Print Lab Orders (with or without results)
-  const printLabOrders = (batchOrder) => {
-    const printWindow = window.open('', '_blank');
-    const patient = visit?.patient || {};
-    const currentDate = new Date().toLocaleDateString();
-
-    // Get results if available
-    const hasResults = (batchOrder.detailedResults && batchOrder.detailedResults.length > 0) ||
-      (batchOrder.labResults && batchOrder.labResults.length > 0);
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Lab Order - ${patient.name || 'Patient'}</title>
-          <style>
-            @media print { @page { size: A4; margin: 10mm; } }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 15px; color: #333; }
-            .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
-            .clinic-name { font-size: 20px; font-weight: bold; color: #1e40af; }
-            .section { margin-bottom: 15px; }
-            .section-title { font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #1e40af; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-            .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 12px; }
-            .info-label { font-weight: 600; color: #666; }
-            .test-list { list-style: none; padding: 0; margin: 0; }
-            .test-item { padding: 8px; margin: 4px 0; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #2563eb; }
-            .results-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
-            .results-table th, .results-table td { border: 1px solid #ddd; padding: 6px; text-align: left; }
-            .results-table th { background: #f1f5f9; }
-            .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
-            .status-completed { background: #dcfce7; color: #166534; }
-            .status-pending { background: #fef3c7; color: #92400e; }
-            .no-print { text-align: center; margin-top: 20px; }
-            .no-print button { padding: 8px 20px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
-            @media print { .no-print { display: none; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="clinic-name">Charite Medium Clinic</div>
-            <div>Laboratory Order Form</div>
-          </div>
-          
-          <div class="section">
-            <div class="section-title">Patient Information</div>
-            <div class="info-grid">
-              <div><span class="info-label">Name:</span> ${patient.name || 'N/A'}</div>
-              <div><span class="info-label">ID:</span> ${patient.id || 'N/A'}</div>
-              <div><span class="info-label">Age:</span> ${patient.age || 'N/A'}</div>
-              <div><span class="info-label">Gender:</span> ${patient.gender || 'N/A'}</div>
-              <div><span class="info-label">Phone:</span> ${patient.mobile || 'N/A'}</div>
-              <div><span class="info-label">Date:</span> ${currentDate}</div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title">Order Details</div>
-            <div class="info-grid">
-              <div><span class="info-label">Order ID:</span> #${batchOrder.id}</div>
-              <div><span class="info-label">Status:</span> <span class="status ${hasResults ? 'status-completed' : 'status-pending'}">${hasResults ? 'COMPLETED' : batchOrder.status}</span></div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title">Tests Ordered</div>
-            <ul class="test-list">
-              ${batchOrder.services?.map(service => `<li class="test-item">${service.investigationType?.name || service.service?.name || 'Lab Test'}</li>`).join('') || '<li>No tests ordered</li>'}
-            </ul>
-          </div>
-
-          ${hasResults ? `
-          <div class="section">
-            <div class="section-title">Test Results</div>
-            <table class="results-table">
-              <thead>
-                <tr><th>Test</th><th>Parameter</th><th>Result</th></tr>
-              </thead>
-              <tbody>
-                ${batchOrder.detailedResults?.map(dr => {
-      const testName = dr.template?.name || 'Lab Test';
-      const results = dr.results || {};
-      return Object.entries(results).map(([key, value]) =>
-        `<tr><td>${testName}</td><td>${key}</td><td>${value || '-'}</td></tr>`
-      ).join('');
-    }).join('') || ''}
-                ${batchOrder.labResults?.map(lr =>
-      `<tr><td>${lr.testType?.name || 'Lab Test'}</td><td>Result</td><td>${lr.resultText || '-'}</td></tr>`
-    ).join('') || ''}
-              </tbody>
-            </table>
-          </div>
-          ` : ''}
-
-          ${batchOrder.instructions ? `
-          <div class="section">
-            <div class="section-title">Instructions</div>
-            <p>${batchOrder.instructions}</p>
-          </div>
-          ` : ''}
-
-          <div class="no-print">
-            <button onclick="window.print()">Print</button>
-            <button onclick="window.close()" style="margin-left: 10px; background: #666;">Close</button>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-  };
-
-  // Print Radiology Orders (with or without results)
-  const printRadiologyOrders = (batchOrder) => {
-    const printWindow = window.open('', '_blank');
-    const patient = visit?.patient || {};
-    const currentDate = new Date().toLocaleDateString();
-
-    const hasResults = batchOrder.radiologyResults && batchOrder.radiologyResults.length > 0;
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Radiology Order - ${patient.name || 'Patient'}</title>
-          <style>
-            @media print { @page { size: A4; margin: 10mm; } }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 15px; color: #333; }
-            .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
-            .clinic-name { font-size: 20px; font-weight: bold; color: #1e40af; }
-            .section { margin-bottom: 15px; }
-            .section-title { font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #1e40af; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-            .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 12px; }
-            .info-label { font-weight: 600; color: #666; }
-            .test-list { list-style: none; padding: 0; margin: 0; }
-            .test-item { padding: 8px; margin: 4px 0; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #2563eb; }
-            .results-box { padding: 15px; background: #f8f9fa; border-radius: 4px; margin-top: 10px; }
-            .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
-            .status-completed { background: #dcfce7; color: #166534; }
-            .status-pending { background: #fef3c7; color: #92400e; }
-            .no-print { text-align: center; margin-top: 20px; }
-            .no-print button { padding: 8px 20px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
-            @media print { .no-print { display: none; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="clinic-name">Charite Medium Clinic</div>
-            <div>Radiology Order Form</div>
-          </div>
-          
-          <div class="section">
-            <div class="section-title">Patient Information</div>
-            <div class="info-grid">
-              <div><span class="info-label">Name:</span> ${patient.name || 'N/A'}</div>
-              <div><span class="info-label">ID:</span> ${patient.id || 'N/A'}</div>
-              <div><span class="info-label">Age:</span> ${patient.age || 'N/A'}</div>
-              <div><span class="info-label">Gender:</span> ${patient.gender || 'N/A'}</div>
-              <div><span class="info-label">Phone:</span> ${patient.mobile || 'N/A'}</div>
-              <div><span class="info-label">Date:</span> ${currentDate}</div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title">Order Details</div>
-            <div class="info-grid">
-              <div><span class="info-label">Order ID:</span> #${batchOrder.id}</div>
-              <div><span class="info-label">Status:</span> <span class="status ${hasResults ? 'status-completed' : 'status-pending'}">${hasResults ? 'COMPLETED' : batchOrder.status}</span></div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="section-title">Radiology Tests Ordered</div>
-            <ul class="test-list">
-              ${batchOrder.services?.map(service => `<li class="test-item">${service.investigationType?.name || service.service?.name || 'Radiology Test'}</li>`).join('') || '<li>No tests ordered</li>'}
-            </ul>
-          </div>
-
-          ${hasResults ? `
-          <div class="section">
-            <div class="section-title">Test Results</div>
-            ${batchOrder.radiologyResults.map(rr => `
-              <div class="results-box">
-                <strong>${rr.testType?.name || 'Radiology Test'}</strong>
-                <p>${rr.resultText || rr.findings || 'No findings recorded'}</p>
-                ${rr.additionalNotes ? `<p><em>Notes: ${rr.additionalNotes}</em></p>` : ''}
-              </div>
-            `).join('')}
-          </div>
-          ` : ''}
-
-          ${batchOrder.instructions ? `
-          <div class="section">
-            <div class="section-title">Instructions</div>
-            <p>${batchOrder.instructions}</p>
-          </div>
-          ` : ''}
-
-          <div class="no-print">
-            <button onclick="window.print()">Print</button>
-            <button onclick="window.close()" style="margin-left: 10px; background: #666;">Close</button>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
   };
 
   // Function to open ImageViewer
@@ -1307,23 +448,6 @@ const PatientConsultationPage = () => {
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto" style={{ borderColor: '#2e13d1' }}></div>
             <p className="mt-4" style={{ color: '#0C0E0B' }}>Loading patient data...</p>
           </div>
-        </div>
-      </Layout>
-    );
-  }
-
-  if (!visit) {
-    return (
-      <Layout title="Patient Consultation" subtitle="Unable to load visit">
-        <div className="max-w-xl mx-auto bg-white border border-red-200 rounded-lg p-6 text-center">
-          <p className="text-lg font-semibold text-red-700 mb-2">Could not load consultation data</p>
-          <p className="text-sm text-gray-600 mb-4">Please return to queue and open the patient again.</p>
-          <button
-            onClick={() => navigate('/doctor/queue')}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Back to Queue
-          </button>
         </div>
       </Layout>
     );
@@ -1413,38 +537,22 @@ const PatientConsultationPage = () => {
                 <ArrowLeft className="inline-block mr-2 h-4 w-4" />
                 Back to Queue
               </button>
-              {!isCompletedMode && (
-                <button
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center text-base whitespace-nowrap ${hasPendingOrders ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
-                  style={{
-                    backgroundColor: hasPendingOrders ? '#9CA3AF' : '#EA2E00',
-                    color: '#FFFFFF'
-                  }}
-                  onClick={handleCompleteVisit}
-                  disabled={hasPendingOrders}
-                  title={hasPendingOrders ? 'Cannot complete visit with pending lab, radiology, or procedure orders' : 'Complete this visit'}
-                >
-                  Complete Visit
-                </button>
-              )}
+              <button
+                className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center text-base whitespace-nowrap ${hasPendingOrders ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                style={{
+                  backgroundColor: hasPendingOrders ? '#9CA3AF' : '#EA2E00',
+                  color: '#FFFFFF'
+                }}
+                onClick={handleCompleteVisit}
+                disabled={hasPendingOrders}
+                title={hasPendingOrders ? 'Cannot complete visit with pending lab or radiology orders' : 'Complete this visit'}
+              >
+                Complete Visit
+              </button>
             </div>
           </div>
         </div>
-
-        {isCompletedMode && (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="flex items-start gap-3">
-              <CheckCircle className="h-5 w-5 mt-0.5 text-emerald-700" />
-              <div>
-                <p className="text-sm font-semibold text-emerald-900">Completed Visit Review Mode</p>
-                <p className="text-sm text-emerald-800 mt-1">
-                  This visit was opened from the completed queue. Full consultation tabs and print actions are available here for follow-up review and re-issue workflows.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Tabs Navigation - SMART FLEX BLOCKS */}
         <div className="border-b" style={{ borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' }}>
@@ -1605,166 +713,6 @@ const PatientConsultationPage = () => {
                     placeholder="Additional notes..."
                   />
                 </div>
-
-                <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                  <h4 className="text-sm font-semibold mb-3" style={{ color: '#0C0E0B' }}>
-                    Physical Assessment (Doctor Addendum)
-                  </h4>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">General Appearance Status</label>
-                      <select
-                        value={triageForm.generalAppearanceStatus}
-                        onChange={(e) => setTriageForm({ ...triageForm, generalAppearanceStatus: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                      >
-                        <option value="NOT_ASSESSED">Not Assessed</option>
-                        <option value="NORMAL">Normal</option>
-                        <option value="ABNORMAL">Abnormal</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">General Appearance Notes</label>
-                      <input
-                        type="text"
-                        value={triageForm.generalAppearance}
-                        onChange={(e) => setTriageForm({ ...triageForm, generalAppearance: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Alertness, distress, cooperation"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Skin Status</label>
-                      <select
-                        value={triageForm.skinStatus}
-                        onChange={(e) => setTriageForm({ ...triageForm, skinStatus: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                      >
-                        <option value="NOT_ASSESSED">Not Assessed</option>
-                        <option value="NORMAL">Normal</option>
-                        <option value="ABNORMAL">Abnormal</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Skin Findings</label>
-                      <input
-                        type="text"
-                        value={triageForm.skinFindings}
-                        onChange={(e) => setTriageForm({ ...triageForm, skinFindings: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Rash, lesion, edema, wound"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium mb-2">Skin Body Regions</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 border border-gray-200 rounded-md bg-white">
-                      {['Head/Face', 'Neck', 'Chest', 'Back', 'Abdomen', 'Upper Limbs', 'Lower Limbs', 'Generalized'].map((region) => (
-                        <label key={region} className="flex items-center space-x-2 text-xs text-gray-700">
-                          <input
-                            type="checkbox"
-                            checked={triageForm.skinBodyRegions.includes(region)}
-                            onChange={(e) => {
-                              const nextRegions = e.target.checked
-                                ? [...triageForm.skinBodyRegions, region]
-                                : triageForm.skinBodyRegions.filter((item) => item !== region);
-                              setTriageForm({ ...triageForm, skinBodyRegions: nextRegions });
-                            }}
-                          />
-                          <span>{region}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Head & Neck</label>
-                      <textarea
-                        rows={2}
-                        value={triageForm.headAndNeck}
-                        onChange={(e) => setTriageForm({ ...triageForm, headAndNeck: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Head and neck exam"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Cardiovascular</label>
-                      <textarea
-                        rows={2}
-                        value={triageForm.cardiovascularExam}
-                        onChange={(e) => setTriageForm({ ...triageForm, cardiovascularExam: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Heart sounds, pulses"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Respiratory</label>
-                      <textarea
-                        rows={2}
-                        value={triageForm.respiratoryExam}
-                        onChange={(e) => setTriageForm({ ...triageForm, respiratoryExam: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Lung sounds, effort"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Abdominal</label>
-                      <textarea
-                        rows={2}
-                        value={triageForm.abdominalExam}
-                        onChange={(e) => setTriageForm({ ...triageForm, abdominalExam: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Inspection, palpation"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Extremities</label>
-                      <textarea
-                        rows={2}
-                        value={triageForm.extremities}
-                        onChange={(e) => setTriageForm({ ...triageForm, extremities: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Movement, edema, tenderness"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Neurological</label>
-                      <textarea
-                        rows={2}
-                        value={triageForm.neurologicalExam}
-                        onChange={(e) => setTriageForm({ ...triageForm, neurologicalExam: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                        placeholder="Mental status, motor, sensory"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 p-3 rounded-md border border-amber-200 bg-amber-50">
-                    <label className="flex items-center text-sm font-medium text-amber-900 mb-2">
-                      <input
-                        type="checkbox"
-                        checked={triageForm.doctorAlertFlag}
-                        onChange={(e) => setTriageForm({ ...triageForm, doctorAlertFlag: e.target.checked })}
-                        className="mr-2"
-                      />
-                      Flag Important Finding
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={triageForm.doctorAlertSummary}
-                      onChange={(e) => setTriageForm({ ...triageForm, doctorAlertSummary: e.target.value })}
-                      className="w-full px-3 py-2 border border-amber-300 rounded-md"
-                      placeholder="Short warning or handoff note"
-                    />
-                  </div>
-                </div>
-
                 <div className="flex justify-end space-x-3 pt-4">
                   <button
                     type="button"
@@ -1783,7 +731,7 @@ const PatientConsultationPage = () => {
                       cursor: recordingTriage ? 'not-allowed' : 'pointer'
                     }}
                   >
-                    {recordingTriage ? 'Recording...' : 'Add Doctor Vitals'}
+                    {recordingTriage ? 'Recording...' : 'Record Vitals'}
                   </button>
                 </div>
               </form>
@@ -1794,978 +742,176 @@ const PatientConsultationPage = () => {
             <div>
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold" style={{ color: '#0C0E0B' }}>Vitals & History</h3>
-                <button
-                  onClick={() => setActiveTab('triage')}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
-                >
-                  <Stethoscope className="h-4 w-4" />
-                  <span>Add Doctor Vitals</span>
-                </button>
+                {!vitals && visit && (
+                  <button
+                    onClick={() => setActiveTab('triage')}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                  >
+                    <Stethoscope className="h-4 w-4" />
+                    <span>Record Triage</span>
+                  </button>
+                )}
               </div>
+              {vitals ? (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                    <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Blood Pressure</p>
+                    <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
+                      {vitals.bloodPressure || 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                    <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Temperature</p>
+                    <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
+                      {vitals.temperature ? `${vitals.temperature}°C` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                    <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Heart Rate</p>
+                    <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
+                      {vitals.heartRate ? `${vitals.heartRate} bpm` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                    <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Weight</p>
+                    <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
+                      {vitals.weight ? `${vitals.weight} kg` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                    <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Height</p>
+                    <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
+                      {vitals.height ? `${vitals.height} cm` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
+                    <p className="text-xs font-medium" style={{ color: '#6B7280' }}>SpO2</p>
+                    <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
+                      {vitals.spo2 ? `${vitals.spo2}%` : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p style={{ color: '#6B7280' }}>No vitals recorded for this visit</p>
+                  <button
+                    onClick={() => setActiveTab('triage')}
+                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                  >
+                    <Stethoscope className="h-4 w-4" />
+                    <span>Record Triage</span>
+                  </button>
+                </div>
+              )}
 
-              {allVitals.length > 0 ? (
+              {vitals && (
                 <>
-                  {/* Nurse Vitals Section - Read Only */}
-                  {nurseVitals && (
-                    <div className="mb-6">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold" style={{ color: '#0C0E0B' }}>
-                          Nurse Recorded Vitals
-                        </h4>
-                        <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
-                          Recorded by Nurse
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                          <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Blood Pressure</p>
-                          <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                            {nurseVitals.bloodPressure || 'N/A'}
-                          </p>
-                        </div>
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                          <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Temperature</p>
-                          <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                            {nurseVitals.temperature ? `${nurseVitals.temperature}°C` : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                          <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Heart Rate</p>
-                          <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                            {nurseVitals.heartRate ? `${nurseVitals.heartRate} bpm` : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                          <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Weight</p>
-                          <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                            {nurseVitals.weight ? `${nurseVitals.weight} kg` : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                          <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Height</p>
-                          <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                            {nurseVitals.height ? `${nurseVitals.height} cm` : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="p-4 rounded-lg" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                          <p className="text-xs font-medium" style={{ color: '#6B7280' }}>SpO2</p>
-                          <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                            {nurseVitals.oxygenSaturation || nurseVitals.spo2 ? `${nurseVitals.oxygenSaturation || nurseVitals.spo2}%` : 'N/A'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Doctor Vitals Section(s) - Additional Vitals */}
-                  {doctorVitals.length > 0 && (
-                    <div className="mb-6">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold" style={{ color: '#0C0E0B' }}>
-                          Doctor Recorded Vitals
-                        </h4>
-                        <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
-                          {doctorVitals.length} additional reading{doctorVitals.length > 1 ? 's' : ''}
-                        </span>
-                      </div>
-                      {doctorVitals.map((dv, index) => (
-                        <div key={dv.id} className="mb-4">
-                          <p className="text-xs text-gray-500 mb-2">
-                            Reading {index + 1} - {new Date(dv.createdAt).toLocaleString()}
-                          </p>
-                          <div className="grid grid-cols-3 gap-4">
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                              <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Blood Pressure</p>
-                              <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                                {dv.bloodPressure || 'N/A'}
-                              </p>
-                            </div>
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                              <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Temperature</p>
-                              <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                                {dv.temperature ? `${dv.temperature}°C` : 'N/A'}
-                              </p>
-                            </div>
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                              <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Heart Rate</p>
-                              <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                                {dv.heartRate ? `${dv.heartRate} bpm` : 'N/A'}
-                              </p>
-                            </div>
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                              <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Weight</p>
-                              <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                                {dv.weight ? `${dv.weight} kg` : 'N/A'}
-                              </p>
-                            </div>
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                              <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Height</p>
-                              <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                                {dv.height ? `${dv.height} cm` : 'N/A'}
-                              </p>
-                            </div>
-                            <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-                              <p className="text-xs font-medium" style={{ color: '#6B7280' }}>SpO2</p>
-                              <p className="text-xl font-semibold mt-1" style={{ color: '#0C0E0B' }}>
-                                {dv.oxygenSaturation || dv.spo2 ? `${dv.oxygenSaturation || dv.spo2}%` : 'N/A'}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {nurseVitals && (
-                    <div>
-                      {/* Chief Complaint & History */}
-                      <div className="mt-6">
-                        <h4 className="font-semibold mb-2" style={{ color: '#0C0E0B' }}>Chief Complaint & History</h4>
-                        <div className="space-y-3">
-                          {nurseVitals.chiefComplaint && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Chief Complaint:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.chiefComplaint}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.historyOfPresentIllness && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>History of Present Illness:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.historyOfPresentIllness}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.onsetOfSymptoms && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Onset of Symptoms:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.onsetOfSymptoms}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.durationOfSymptoms && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Duration of Symptoms:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.durationOfSymptoms}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Physical Examination */}
-                      <div className="mt-6">
-                        <h4 className="font-semibold mb-2" style={{ color: '#0C0E0B' }}>Physical Examination</h4>
-                        <div className="space-y-3">
-                          {nurseVitals.generalAppearance && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>General Appearance:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.generalAppearance}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.headAndNeck && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Head & Neck:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.headAndNeck}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.cardiovascularExam && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Cardiovascular:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.cardiovascularExam}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.respiratoryExam && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Respiratory:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.respiratoryExam}
-                              </p>
-                            </div>
-                          )}
-                          {nurseVitals.abdominalExam && (
-                            <div>
-                              <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Abdominal:</p>
-                              <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                                {nurseVitals.abdominalExam}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Nurse Notes */}
-                      {nurseVitals.notes && (
-                        <div className="mt-6">
-                          <h4 className="font-semibold mb-2" style={{ color: '#0C0E0B' }}>Nurse Notes</h4>
+                  {/* Chief Complaint & History */}
+                  <div className="mt-6">
+                    <h4 className="font-semibold mb-2" style={{ color: '#0C0E0B' }}>Chief Complaint & History</h4>
+                    <div className="space-y-3">
+                      {vitals.chiefComplaint && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Chief Complaint:</p>
                           <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
-                            {nurseVitals.notes}
+                            {vitals.chiefComplaint}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.historyOfPresentIllness && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>History of Present Illness:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.historyOfPresentIllness}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.onsetOfSymptoms && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Onset of Symptoms:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.onsetOfSymptoms}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.durationOfSymptoms && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Duration of Symptoms:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.durationOfSymptoms}
                           </p>
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  {/* Physical Examination */}
+                  <div className="mt-6">
+                    <h4 className="font-semibold mb-2" style={{ color: '#0C0E0B' }}>Physical Examination</h4>
+                    <div className="space-y-3">
+                      {vitals.generalAppearance && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>General Appearance:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.generalAppearance}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.headAndNeck && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Head & Neck:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.headAndNeck}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.cardiovascularExam && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Cardiovascular:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.cardiovascularExam}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.respiratoryExam && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Respiratory:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.respiratoryExam}
+                          </p>
+                        </div>
+                      )}
+                      {vitals.abdominalExam && (
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: '#6B7280' }}>Abdominal:</p>
+                          <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                            {vitals.abdominalExam}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Nurse Notes */}
+                  {vitals.notes && (
+                    <div className="mt-6">
+                      <h4 className="font-semibold mb-2" style={{ color: '#0C0E0B' }}>Nurse Notes</h4>
+                      <p className="p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB', color: '#0C0E0B' }}>
+                        {vitals.notes}
+                      </p>
+                    </div>
                   )}
                 </>
-              ) : (
-                <div className="text-center py-8">
-                  <Stethoscope className="h-12 w-12 mx-auto mb-4" style={{ color: '#9CA3AF' }} />
-                  <p style={{ color: '#6B7280' }}>No vitals recorded for this visit.</p>
-                </div>
               )}
             </div>
           )}
 
           {activeTab === 'patient-history' && (
-            <div>
-              <h3 className="text-lg font-semibold mb-4" style={{ color: '#0C0E0B' }}>Patient History</h3>
-              {patientHistoryLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4" style={{ borderColor: '#2e13d1' }}></div>
-                    <p style={{ color: '#6B7280' }}>Loading patient history...</p>
-                  </div>
-                </div>
-              ) : patientHistory ? (
-                <div className="space-y-6">
-                  {/* Patient Info */}
-                  <div className="p-4 rounded-lg border" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div>
-                        <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Patient Name</p>
-                        <p className="text-sm font-semibold" style={{ color: '#0C0E0B' }}>{patientHistory.patient.name}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Age / Gender</p>
-                        <p className="text-sm font-semibold" style={{ color: '#0C0E0B' }}>
-                          {patientHistory.patient.age || 'N/A'} / {patientHistory.patient.gender || 'N/A'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Blood Type</p>
-                        <p className="text-sm font-semibold" style={{ color: '#0C0E0B' }}>{patientHistory.patient.bloodType || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium" style={{ color: '#6B7280' }}>Mobile</p>
-                        <p className="text-sm font-semibold" style={{ color: '#0C0E0B' }}>{patientHistory.patient.phone || patientHistory.patient.mobile || 'N/A'}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Visit List */}
-
-                  {/* Visit List */}
-                  {patientHistory.visits && patientHistory.visits.length > 0 ? (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-md font-semibold flex items-center gap-2" style={{ color: '#0C0E0B' }}>
-                          <Calendar className="h-4 w-4" />
-                          Past Visits ({patientHistory.visits.length})
-                        </h4>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {patientHistory.visits.map((visitItem) => (
-                          <div
-                            key={visitItem.id}
-                            className={`p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 hover:shadow-md ${selectedHistoryVisitId === visitItem.id ? 'border-indigo-500 bg-indigo-50 shadow-md' : 'border-gray-200 hover:border-gray-300 bg-white'
-                              }`}
-                            onClick={() => setSelectedHistoryVisitId(visitItem.id)}
-                          >
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <div className="flex items-center space-x-3 mb-2">
-                                  <p className="font-bold text-lg" style={{ color: '#0C0E0B' }}>{visitItem.visitUid}</p>
-                                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${visitItem.status === 'COMPLETED' ? 'bg-green-100 text-green-700 border border-green-200' :
-                                    visitItem.status === 'CANCELLED' ? 'bg-red-100 text-red-700 border border-red-200' :
-                                      'bg-yellow-100 text-yellow-700 border border-yellow-200'
-                                    }`}>
-                                    {visitItem.status?.replace(/_/g, ' ') || 'N/A'}
-                                  </span>
-                                </div>
-                                <p className="text-sm flex items-center gap-1" style={{ color: '#6B7280' }}>
-                                  <Calendar className="h-3 w-3" />
-                                  {new Date(visitItem.date || visitItem.createdAt).toLocaleDateString()} • {new Date(visitItem.date || visitItem.createdAt).toLocaleTimeString()}
-                                </p>
-                                {visitItem.diagnosis && (
-                                  <p className="text-sm mt-2 font-medium bg-blue-50 px-3 py-1 rounded-lg border border-blue-100" style={{ color: '#1E40AF' }}>
-                                    📋 {visitItem.diagnosis}
-                                  </p>
-                                )}
-                                {visitItem.doctor && (
-                                  <p className="text-xs mt-2" style={{ color: '#6B7280' }}>
-                                    👨‍⚕️ Dr. {visitItem.doctor.fullname}
-                                  </p>
-                                )}
-                              </div>
-                              <ChevronRight className={`h-5 w-5 transition-transform ${selectedHistoryVisitId === visitItem.id ? 'text-indigo-600 rotate-90' : 'text-gray-400'}`} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Selected Visit Details */}
-                      {selectedHistoryVisitId && (() => {
-                        const selectedVisit = patientHistory.visits.find(v => v.id === selectedHistoryVisitId);
-                        if (!selectedVisit) return null;
-
-                        return (
-                          <div className="mt-6">
-                            {/* Tab Buttons */}
-                            <div className="flex flex-wrap gap-2 mb-4 p-2 bg-gray-50 rounded-lg">
-                              <button
-                                onClick={() => setVisitDetailTab('summary')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'summary' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Summary
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('vitals')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'vitals' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Vitals ({selectedVisit.vitals?.length || 0})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('notes')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'notes' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Diagnosis Notes
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('labs')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'labs' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Lab Orders ({(selectedVisit.labOrders?.length || 0) + (selectedVisit.labTestOrders?.length || 0)})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('radiology')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'radiology' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Radiology ({(selectedVisit.radiologyOrders?.length || 0) + (selectedVisit.batchOrders?.filter(bo => bo.type === 'RADIOLOGY').reduce((acc, bo) => acc + (bo.services?.length || 0), 0) || 0)})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('medications')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'medications' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Medications ({selectedVisit.medicationOrders?.length || 0})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('compoundRx')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'compoundRx' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Compound Rx ({selectedVisit.compoundPrescriptions?.length || 0})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('procedures')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'procedures' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Procedures ({selectedVisit.procedures?.length || 0})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('images')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'images' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Images ({selectedVisit.files?.length || 0})
-                              </button>
-                              <button
-                                onClick={() => setVisitDetailTab('other')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${visitDetailTab === 'other' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
-                                  }`}
-                              >
-                                Other Services
-                              </button>
-                            </div>
-
-                            {/* Tab Content */}
-                            <div className="bg-white border rounded-lg p-4">
-                              {/* Summary Tab */}
-                              {visitDetailTab === 'summary' && (
-                                <div className="space-y-4">
-                                  <div className="flex items-center gap-2 pb-3 border-b">
-                                    <FileText className="h-5 w-5 text-indigo-600" />
-                                    <h4 className="text-lg font-bold">Visit #{selectedVisit.visitUid}</h4>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${selectedVisit.status === 'COMPLETED' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                                      }`}>
-                                      {selectedVisit.status?.replace(/_/g, ' ')}
-                                    </span>
-                                  </div>
-                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                    <div className="p-3 bg-green-50 rounded-lg">
-                                      <p className="text-xs text-green-700">Diagnoses</p>
-                                      <p className="text-2xl font-bold text-green-800">{selectedVisit.diagnoses?.length || 0}</p>
-                                    </div>
-                                    <div className="p-3 bg-blue-50 rounded-lg">
-                                      <p className="text-xs text-blue-700">Lab Orders</p>
-                                      <p className="text-2xl font-bold text-blue-800">{(selectedVisit.labOrders?.length || 0) + (selectedVisit.labTestOrders?.length || 0) + (selectedVisit.batchOrders?.filter(bo => bo.type === 'LAB').reduce((acc, bo) => acc + (bo.services?.length || 0), 0) || 0)}</p>
-                                    </div>
-                                    <div className="p-3 bg-yellow-50 rounded-lg">
-                                      <p className="text-xs text-yellow-700">Radiology</p>
-                                      <p className="text-2xl font-bold text-yellow-800">{(selectedVisit.radiologyOrders?.length || 0) + (selectedVisit.batchOrders?.filter(bo => bo.type === 'RADIOLOGY').reduce((acc, bo) => acc + (bo.services?.length || 0), 0) || 0)}</p>
-                                    </div>
-                                    <div className="p-3 bg-purple-50 rounded-lg">
-                                      <p className="text-xs text-purple-700">Medications</p>
-                                      <p className="text-2xl font-bold text-purple-800">{selectedVisit.medicationOrders?.length || 0}</p>
-                                    </div>
-                                  </div>
-                                  {selectedVisit.diagnosis && (
-                                    <div className="p-3 bg-blue-50 rounded-lg">
-                                      <p className="text-sm font-bold text-blue-800">Note: {selectedVisit.diagnosis}</p>
-                                    </div>
-                                  )}
-                                  {selectedVisit.diagnoses && selectedVisit.diagnoses.length > 0 && (
-                                    <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
-                                      <p className="text-sm font-bold text-red-800 mb-2">Confirmed Diagnoses:</p>
-                                      <div className="flex flex-wrap gap-2">
-                                        {selectedVisit.diagnoses.map((diag, i) => (
-                                          <span key={i} className="px-2 py-1 bg-white text-red-700 border border-red-200 rounded text-xs font-semibold">
-                                            {diag.disease?.name} ({diag.type})
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Vitals Tab */}
-                              {visitDetailTab === 'vitals' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg">Vitals Recorded</h4>
-                                  {selectedVisit.vitals && selectedVisit.vitals.length > 0 ? (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                      {selectedVisit.vitals.map((vital) => (
-                                        <div key={vital.id} className="p-4 border rounded-lg bg-red-50">
-                                          <p className="text-xs text-red-600 mb-2">{new Date(vital.createdAt).toLocaleString()}</p>
-                                          <div className="grid grid-cols-2 gap-2 text-sm">
-                                            <p>🩺 BP: {vital.bloodPressure || 'N/A'}</p>
-                                            <p>❤️ HR: {vital.heartRate || 'N/A'} bpm</p>
-                                            <p>🌡️ Temp: {vital.temperature ? `${vital.temperature}°C` : 'N/A'}</p>
-                                            <p>⚖️ Weight: {vital.weight ? `${vital.weight}kg` : 'N/A'}</p>
-                                            {vital.oxygenSaturation && <p>🫁 O₂: {vital.oxygenSaturation}%</p>}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No vitals recorded for this visit</p>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Diagnosis Notes Tab */}
-                              {visitDetailTab === 'notes' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg flex items-center gap-2 text-blue-800">
-                                    📋 Diagnosis Notes
-                                  </h4>
-                                  {selectedVisit.diagnosisNotes && selectedVisit.diagnosisNotes.length > 0 ? (
-                                    <div className="space-y-3">
-                                      {selectedVisit.diagnosisNotes.map((note) => (
-                                        <NoteDisplayWithEdit
-                                          key={note.id}
-                                          note={note}
-                                          visitId={selectedVisit.id}
-                                          onUpdate={() => {
-                                            const idx = patientHistory.visits.findIndex(v => v.id === selectedVisit.id);
-                                            if (idx !== -1 && patientHistory.visits[idx].diagnosisNotes) {
-                                              fetchPatientHistory(selectedVisit.patientId);
-                                            }
-                                          }}
-                                        />
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No diagnosis notes for this visit</p>
-                                  )}
-
-                                  {selectedVisit.diagnoses && selectedVisit.diagnoses.length > 0 && (
-                                    <div className="mt-6 p-4 bg-red-50 rounded-lg border border-red-100">
-                                      <h5 className="font-semibold text-red-900 mb-3 flex items-center gap-2">
-                                        🦠 Confirmed Diagnoses for this Visit
-                                      </h5>
-                                      <div className="flex flex-wrap gap-2">
-                                        {selectedVisit.diagnoses.map((diag, i) => (
-                                          <div key={i} className="px-3 py-2 bg-white text-red-800 rounded-md border border-red-200 text-sm shadow-sm">
-                                            <span className="font-bold">{diag.disease?.name}</span>
-                                            {diag.disease?.code && <span className="ml-1 text-red-600">({diag.disease.code})</span>}
-                                            <span className="ml-2 text-xs px-2 py-0.5 bg-red-100 rounded-full">{diag.type}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Lab Orders Tab */}
-                              {visitDetailTab === 'labs' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg flex items-center gap-2 text-blue-800">
-                                    🧪 Lab Results & Orders
-                                  </h4>
-                                  {selectedVisit.labResults && selectedVisit.labResults.length > 0 ? (
-                                    <div className="space-y-4">
-                                      {selectedVisit.labResults.map((result, idx) => (
-                                        <div key={idx} className="p-4 border border-blue-100 rounded-lg shadow-sm bg-blue-50">
-                                          <div className="flex justify-between items-start mb-2">
-                                            <div>
-                                              <p className="font-semibold text-blue-900">{result.testType?.name || 'Lab Test'}</p>
-                                              <p className="text-xs text-blue-600">{new Date(result.createdAt).toLocaleString()}</p>
-                                            </div>
-                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${result.status === 'COMPLETED' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                              {result.status}
-                                            </span>
-                                          </div>
-
-                                          {result.resultText && (
-                                            <div className="mt-2 text-sm bg-white p-2 rounded border border-blue-50 text-gray-700">
-                                              <span className="font-medium">Note/Result:</span> {result.resultText}
-                                            </div>
-                                          )}
-
-                                          {result.detailedResults && result.detailedResults.length > 0 && (
-                                            <div className="mt-3 bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                              <table className="min-w-full divide-y divide-gray-200 text-sm">
-                                                <thead className="bg-gray-50">
-                                                  <tr>
-                                                    <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Test</th>
-                                                    <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Result</th>
-                                                    <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Unit</th>
-                                                    <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Ref Range</th>
-                                                  </tr>
-                                                </thead>
-                                                <tbody className="bg-white divide-y divide-gray-200">
-                                                  {result.detailedResults.map((dr, di) => (
-                                                    <tr key={di}>
-                                                      <td className="px-3 py-2 text-gray-900 font-medium">{dr.testName}</td>
-                                                      <td className="px-3 py-2 text-gray-700 font-bold">{dr.result}</td>
-                                                      <td className="px-3 py-2 text-gray-500">{dr.unit}</td>
-                                                      <td className="px-3 py-2 text-gray-500">{dr.referenceRange}</td>
-                                                    </tr>
-                                                  ))}
-                                                </tbody>
-                                              </table>
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No lab results available for this visit</p>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Radiology Tab */}
-                              {visitDetailTab === 'radiology' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg flex items-center gap-2 text-indigo-800">
-                                    🩻 Radiology Results & Orders
-                                  </h4>
-                                  
-                                  {/* Get all radiology orders from both sources */}
-                                  {(() => {
-                                    const radiologyFromBatch = selectedVisit.batchOrders?.filter(bo => bo.type === 'RADIOLOGY').flatMap(bo => 
-                                      (bo.services || []).map(s => ({
-                                        id: s.id,
-                                        typeId: s.investigationTypeId,
-                                        investigationTypeId: s.investigationTypeId,
-                                        type: s.investigationType || s.service || { name: 'Radiology' },
-                                        status: s.status || bo.status || 'PENDING',
-                                        createdAt: s.createdAt || bo.createdAt,
-                                        fromBatch: true
-                                      }))
-                                    ) || [];
-                                    const radiologyFromOrders = selectedVisit.radiologyOrders || [];
-                                    const allRadiologyOrders = [...radiologyFromBatch, ...radiologyFromOrders];
-                                    
-                                    // Separate completed (with results) vs pending
-                                    const completedRadiology = allRadiologyOrders.filter(rad => 
-                                      selectedVisit.radiologyResults?.some(res => 
-                                        res.testType?.id === rad.typeId || res.testType?.id === rad.investigationTypeId
-                                      )
-                                    );
-                                    const pendingRadiology = allRadiologyOrders.filter(rad => 
-                                      !selectedVisit.radiologyResults?.some(res => 
-                                        res.testType?.id === rad.typeId || res.testType?.id === rad.investigationTypeId
-                                      )
-                                    );
-                                    
-                                    return (
-                                      <>
-                                        {/* Completed Reports */}
-                                        {selectedVisit.radiologyResults && selectedVisit.radiologyResults.length > 0 && (
-                                          <div className="space-y-4 mb-6">
-                                            <h5 className="font-semibold text-gray-700">Completed Reports</h5>
-                                            {selectedVisit.radiologyResults.map((result, idx) => (
-                                              <div key={idx} className="p-4 border border-indigo-100 rounded-lg shadow-sm bg-indigo-50">
-                                                <div className="flex justify-between items-start mb-2">
-                                                  <div>
-                                                    <p className="font-semibold text-indigo-900">{result.testType?.name || 'Radiology Test'}</p>
-                                                    <p className="text-xs text-indigo-600">{new Date(result.createdAt).toLocaleString()}</p>
-                                                  </div>
-                                                  <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                                                    COMPLETED
-                                                  </span>
-                                                </div>
-
-                                                {result.report && (
-                                                  <div className="mt-3">
-                                                    <p className="text-sm font-semibold text-indigo-800 mb-1">Radiologist Report:</p>
-                                                    <div className="text-sm bg-white p-3 rounded-lg border border-indigo-50 text-gray-800 whitespace-pre-wrap">
-                                                      {result.report}
-                                                    </div>
-                                                  </div>
-                                                )}
-
-                                                {result.attachments && result.attachments.length > 0 && (
-                                                  <div className="mt-3">
-                                                    <p className="text-xs font-medium text-indigo-600 mb-2">Attached Scans ({result.attachments.length}):</p>
-                                                    <div className="flex flex-wrap gap-2">
-                                                      {result.attachments.map((att, aIdx) => (
-                                                        <button
-                                                          key={aIdx}
-                                                          onClick={() => window.open(getImageUrl(att.fileUrl), '_blank')}
-                                                          className="flex items-center gap-1 text-xs px-2 py-1 bg-white border border-indigo-200 rounded text-indigo-700 hover:bg-indigo-100 transition-colors"
-                                                        >
-                                                          🖼️ View Scan {aIdx + 1}
-                                                        </button>
-                                                      ))}
-                                                    </div>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-
-                                        {/* Pending/Ordered Scans */}
-                                        {pendingRadiology.length > 0 && (
-                                          <div className="space-y-2">
-                                            <h5 className="font-semibold text-gray-700 mt-2">Ordered / Pending Scans</h5>
-                                            {pendingRadiology.map((rad, idx) => (
-                                              <div key={`order-${idx}`} className="p-3 border border-gray-200 rounded-lg flex justify-between items-center bg-white shadow-sm">
-                                                <div>
-                                                  <p className="font-medium text-gray-800">{rad.type?.name || rad.investigationType?.name || 'Radiology Test'}</p>
-                                                  <p className="text-sm text-gray-500">{new Date(rad.createdAt).toLocaleString()}</p>
-                                                </div>
-                                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${rad.status === 'COMPLETED' || rad.status === 'PAID' ? 'bg-green-100 text-green-700' : rad.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                                  {rad.status === 'PAID' ? 'PAID - In Progress' : rad.status === 'IN_PROGRESS' ? 'IN PROGRESS' : rad.status || 'PENDING'}
-                                                </span>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-
-                                        {allRadiologyOrders.length === 0 && (
-                                          <p className="text-gray-500">No radiology orders or results for this visit</p>
-                                        )}
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                              )}
-
-                              {/* Medications Tab */}
-                              {visitDetailTab === 'medications' && (
-                                <div className="space-y-4">
-                                  <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <h4 className="font-bold text-lg">Medications</h4>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <input
-                                        type="date"
-                                        value={historyMedicationPrintDate}
-                                        onChange={(e) => setHistoryMedicationPrintDate(e.target.value)}
-                                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const printVisit = selectedVisit;
-                                          if (!printVisit) {
-                                            toast.error('Select a visit date first');
-                                            return;
-                                          }
-                                          printHistoryMedicationReprint(printVisit, historyMedicationPrintDate);
-                                        }}
-                                        className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700"
-                                      >
-                                        <Printer className="h-4 w-4" />
-                                        Reprint
-                                      </button>
-                                    </div>
-                                  </div>
-                                  {selectedVisit.medicationOrders && selectedVisit.medicationOrders.length > 0 ? (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                       {selectedVisit.medicationOrders.map((med, idx) => {
-                                        const cleanedInstruction = (med.instructionText || med.instructions || '').replace(/^\s*for\s+/i, '').trim();
-
-                                        return (
-                                        <div key={idx} className="p-4 border rounded-lg bg-white shadow-sm">
-                                          <p className="font-bold text-gray-900">{med.name}</p>
-                                          {cleanedInstruction && (
-                                            <p className="text-sm text-indigo-600 mt-2 bg-indigo-50 p-2 rounded">
-                                              <span className="font-semibold">Instructions:</span> {cleanedInstruction}
-                                            </p>
-                                          )}
-                                        </div>
-                                      );
-                                      })}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No regular medications for this visit</p>
-                                  )}
-
-
-                                </div>
-                              )}
-
-                              {/* Compound Prescriptions Tab */}
-                              {visitDetailTab === 'compoundRx' && (
-                                <div className="space-y-4">
-                                  <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <h4 className="font-bold text-lg flex items-center gap-2">
-                                      🧪 Compound Prescriptions
-                                    </h4>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <input
-                                        type="date"
-                                        value={historyCompoundPrintDate}
-                                        onChange={(e) => setHistoryCompoundPrintDate(e.target.value)}
-                                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const printVisit = selectedVisit;
-                                          if (!printVisit) {
-                                            toast.error('Select a visit date first');
-                                            return;
-                                          }
-                                          printHistoryCompoundReprint(printVisit, historyCompoundPrintDate);
-                                        }}
-                                        className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700"
-                                      >
-                                        <Printer className="h-4 w-4" />
-                                        Reprint
-                                      </button>
-                                    </div>
-                                  </div>
-                                  {selectedVisit.compoundPrescriptions && selectedVisit.compoundPrescriptions.length > 0 ? (
-                                    <div className="space-y-3">
-                                      {selectedVisit.compoundPrescriptions.map((cp, idx) => (
-                                        <div key={idx} className="p-4 border border-amber-200 rounded-lg bg-amber-50 shadow-sm">
-                                          <div className="flex justify-between items-start mb-2">
-                                            <div>
-                                              <p className="font-bold text-amber-900 text-lg">{cp.formulationType} - {cp.quantity}{cp.quantityUnit}</p>
-                                              <p className="text-xs font-mono text-amber-700">{cp.referenceNumber}</p>
-                                            </div>
-                                            <span className="px-2 py-1 bg-amber-200 text-amber-800 rounded text-xs font-medium">
-                                              {cp.status || 'PRESCRIBED'}
-                                            </span>
-                                          </div>
-                                          <div className="text-sm text-amber-800 mb-2 p-2 bg-white rounded border border-amber-100">
-                                            <span className="font-bold">Active Ingredients:</span>
-                                            <ul className="list-disc list-inside mt-1">
-                                              {cp.ingredients?.map((ing, i) => (
-                                                <li key={i}>{ing.ingredientName} <span className="font-mono">{ing.strength}{ing.unit}</span></li>
-                                              ))}
-                                            </ul>
-                                          </div>
-                                          <div className="flex flex-wrap gap-4 text-sm text-amber-800 mt-2">
-                                            {cp.frequencyType && (
-                                              <div>
-                                                <span className="font-medium">Sig:</span> {cp.frequencyType.replace(/_/g, ' ')}
-                                              </div>
-                                            )}
-                                            {cp.durationValue && (
-                                              <div>
-                                                <span className="font-medium">Duration:</span> {cp.durationValue} {cp.durationUnit?.toLowerCase()}
-                                              </div>
-                                            )}
-                                          </div>
-                                          {(cp.prescriptionText || cp.rawText || cp.instructions) && (
-                                            <div className="text-xs text-amber-700 italic mt-2 bg-amber-100 p-2 rounded">
-                                              Note: {cp.prescriptionText || cp.rawText || cp.instructions}
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No compound prescriptions for this visit</p>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Procedures Tab */}
-                              {visitDetailTab === 'procedures' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg">Procedures</h4>
-                                  {selectedVisit.procedures && selectedVisit.procedures.length > 0 ? (
-                                    <div className="space-y-2">
-                                      {selectedVisit.procedures.map((proc, idx) => (
-                                        <div key={idx} className="p-3 border rounded-lg">
-                                          <p className="font-medium">{proc.name || 'Procedure'}</p>
-                                          <div className="flex items-center gap-2 mt-1">
-                                            <span className={`px-2 py-0.5 rounded-full text-xs ${proc.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                              {proc.status || 'PENDING'}
-                                            </span>
-                                            <p className="text-sm text-gray-500">{new Date(proc.createdAt).toLocaleString()}</p>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No procedures for this visit</p>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Images Tab */}
-                              {visitDetailTab === 'images' && (
-                                <div className="space-y-4">
-                                  <h4 className="font-bold text-lg">Attached Images</h4>
-                                  {selectedVisit.files && selectedVisit.files.length > 0 ? (
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                      {selectedVisit.files.map((file, idx) => (
-                                        <div key={idx} className="p-2 border rounded-lg">
-                                          <img src={file.fileUrl} alt="Patient file" className="w-full h-24 object-cover rounded" />
-                                          <p className="text-xs mt-1 truncate">{file.fileName}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500">No images attached for this visit</p>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Other Services Tab (Dental, Emergency, Nurse) */}
-                              {visitDetailTab === 'other' && (
-                                <div className="space-y-6">
-                                  {/* Dental Procedures */}
-                                  {selectedVisit.dentalProcedureCompletions && selectedVisit.dentalProcedureCompletions.length > 0 && (
-                                    <div>
-                                      <h4 className="font-bold text-lg mb-3 flex items-center gap-2 text-blue-900 border-b pb-2">
-                                        🦷 Dental Procedures
-                                      </h4>
-                                      <div className="space-y-3">
-                                        {selectedVisit.dentalProcedureCompletions.map((proc) => (
-                                          <div key={proc.id} className="p-4 border border-blue-100 rounded-lg shadow-sm bg-blue-50">
-                                            <p className="font-semibold" style={{ color: '#1E3A8A' }}>{proc.batchOrderService?.service?.name || 'Procedure'}</p>
-                                            <div className="flex space-x-4 mt-2">
-                                              <p className="text-sm text-gray-700">Tooth: <span className="font-medium">{proc.toothNumber}</span></p>
-                                              {proc.surfaces && proc.surfaces.length > 0 && (
-                                                <p className="text-sm text-gray-700">Surfaces: <span className="font-medium">{proc.surfaces.join(', ')}</span></p>
-                                              )}
-                                            </div>
-                                            {proc.notes && <p className="text-sm text-gray-600 mt-2 italic border-l-2 border-blue-200 pl-2">{proc.notes}</p>}
-                                            <p className="text-xs text-blue-500 mt-2">Completed by {proc.doctor?.fullname || 'Unknown'}</p>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Dental Chart History */}
-                                  {selectedVisit.dentalRecords && selectedVisit.dentalRecords.length > 0 && (
-                                    <div>
-                                      <h4 className="font-bold text-lg mb-3 flex items-center gap-2 text-blue-900 border-b pb-2">
-                                        📋 Stored Dental Chart
-                                      </h4>
-                                      <div className="border border-gray-200 rounded-lg overflow-hidden bg-white p-2">
-                                        <DentalChartDisplay
-                                          patientId={patientHistory.patient.id}
-                                          visitId={selectedVisit.id}
-                                          showHistory={false}
-                                        />
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Emergency Materials/Drugs */}
-                                  {selectedVisit.emergencyDrugOrders && selectedVisit.emergencyDrugOrders.length > 0 && (
-                                    <div>
-                                      <h4 className="font-bold text-lg mb-3 flex items-center gap-2 text-red-900 border-b pb-2">
-                                        🚑 Emergency Materials
-                                      </h4>
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        {selectedVisit.emergencyDrugOrders.map((drug) => (
-                                          <div key={drug.id} className="p-3 border rounded-lg shadow-sm" style={{ borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }}>
-                                            <p className="font-medium text-red-900">{drug.service?.name || 'Emergency Item'}</p>
-                                            <p className="text-sm text-red-700 mt-1">Quantity Used: <span className="font-semibold">{drug.quantity}</span></p>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Nurse Services */}
-                                  {selectedVisit.nurseServiceAssignments && selectedVisit.nurseServiceAssignments.length > 0 && (
-                                    <div>
-                                      <h4 className="font-bold text-lg mb-3 flex items-center gap-2 text-green-900 border-b pb-2">
-                                        👩‍⚕️ Nurse Services
-                                      </h4>
-                                      <div className="space-y-3">
-                                        {selectedVisit.nurseServiceAssignments.map((nurseServ) => (
-                                          <div key={nurseServ.id} className="p-4 border rounded-lg shadow-sm bg-green-50 border-green-200">
-                                            <p className="font-semibold text-green-900">{nurseServ.service?.name || 'Nurse Service'}</p>
-                                            <p className="text-sm text-green-700 mt-1">Status: <span className="font-medium">{nurseServ.status}</span></p>
-                                            {nurseServ.notes && <p className="text-sm text-green-800 mt-2 italic">{nurseServ.notes}</p>}
-                                            {nurseServ.assignedNurse && <p className="text-xs text-green-600 mt-2">Handled by: {nurseServ.assignedNurse.fullname}</p>}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {(!selectedVisit.dentalProcedureCompletions || selectedVisit.dentalProcedureCompletions.length === 0) &&
-                                    (!selectedVisit.dentalRecords || selectedVisit.dentalRecords.length === 0) &&
-                                    (!selectedVisit.emergencyDrugOrders || selectedVisit.emergencyDrugOrders.length === 0) &&
-                                    (!selectedVisit.nurseServiceAssignments || selectedVisit.nurseServiceAssignments.length === 0) && (
-                                      <div className="text-center py-6 bg-gray-50 rounded-lg">
-                                        <p className="text-sm text-gray-500">No other services recorded for this visit.</p>
-                                      </div>
-                                    )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <User className="h-12 w-12 mx-auto mb-4" style={{ color: '#9CA3AF' }} />
-                      <p style={{ color: '#6B7280' }}>No past history found for this patient</p>
-                      <p className="text-sm mt-2" style={{ color: '#9CA3AF' }}>This appears to be the patient's first visit</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <User className="h-12 w-12 mx-auto mb-4" style={{ color: '#9CA3AF' }} />
-                  <p style={{ color: '#6B7280' }}>No patient history available</p>
-                </div>
-              )}
+            <div className="-m-4">
+              <ComprehensivePatientHistory
+                patientIdProp={visit.patient?.id}
+                embedded={true}
+              />
             </div>
           )}
 
@@ -2986,11 +1132,12 @@ const PatientConsultationPage = () => {
             </div>
           )}
 
+          {/* Medical History Tab */}
           {activeTab === 'dental' && (
             <div>
               <h3 className="text-lg font-semibold mb-4" style={{ color: '#0C0E0B' }}>Dental Chart</h3>
 
-              {canAccessDentalFeatures ? (
+              {currentUser?.qualifications?.includes('Dentist') ? (
                 <div>
                   {dentalRecord ? (
                     <div className="mb-4 p-4 border rounded-lg" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
@@ -3029,7 +1176,6 @@ const PatientConsultationPage = () => {
                     ref={dentalChartRef}
                     patientId={visit?.patientId}
                     visitId={visitId}
-                    patientAge={visit?.patient?.age}
                     onSave={handleDentalChartSave}
                     initialData={dentalRecord}
                   />
@@ -3037,9 +1183,9 @@ const PatientConsultationPage = () => {
               ) : (
                 <div className="text-center py-8">
                   <Smile className="h-12 w-12 mx-auto mb-4" style={{ color: '#9CA3AF' }} />
-                  <p style={{ color: '#6B7280' }}>Dental chart is not enabled for your workspace profile</p>
+                  <p style={{ color: '#6B7280' }}>Dental chart is only available to dentists</p>
                   <p className="text-sm" style={{ color: '#9CA3AF' }}>
-                    An administrator can allow this tab from System Settings when needed
+                    This feature is restricted to doctors with dental qualification
                   </p>
                 </div>
               )}
@@ -3233,19 +1379,9 @@ const PatientConsultationPage = () => {
                                   Completed: {new Date(batchOrder.updatedAt).toLocaleDateString()}
                                 </p>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => printLabOrders(batchOrder)}
-                                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium text-green-800 bg-green-100 hover:bg-green-200 rounded transition-colors"
-                                  title="Print Lab Order"
-                                >
-                                  <Printer className="h-4 w-4" />
-                                  Print
-                                </button>
-                                <span className="px-2 py-1 text-xs font-medium text-green-800 bg-green-200 rounded-full">
-                                  COMPLETED
-                                </span>
-                              </div>
+                              <span className="px-2 py-1 text-xs font-medium text-green-800 bg-green-200 rounded-full">
+                                COMPLETED
+                              </span>
                             </div>
 
                             {/* Show detailed lab results */}
@@ -3395,20 +1531,12 @@ const PatientConsultationPage = () => {
                                         const fieldValue = latestResult.results[field.fieldName];
                                         if (fieldValue === undefined || fieldValue === null || fieldValue === '') return null;
 
-                                        const rangeCheck = checkValueInNormalRange(fieldValue, field.normalRange);
-                                        const isAbnormal = !rangeCheck.inRange;
-
                                         return (
-                                          <div key={field.id} className={`p-2 rounded text-sm ${isAbnormal ? 'bg-red-50 border border-red-200' : 'bg-white'}`}>
+                                          <div key={field.id} className="p-2 bg-white rounded text-sm">
                                             <div className="font-medium text-gray-800">
                                               {field.label}
                                             </div>
-                                            <div className={isAbnormal ? 'text-red-600 font-semibold' : 'text-gray-600'}>
-                                              {fieldValue} {field.unit || ''}
-                                            </div>
-                                            {isAbnormal && rangeCheck.message && (
-                                              <div className="text-xs text-red-500 mt-1">{rangeCheck.message}</div>
-                                            )}
+                                            <div className="text-gray-600">{fieldValue} {field.unit || ''}</div>
                                           </div>
                                         );
                                       })}
@@ -3458,19 +1586,9 @@ const PatientConsultationPage = () => {
                                   Created: {new Date(batchOrder.createdAt).toLocaleDateString()}
                                 </p>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => printLabOrders(batchOrder)}
-                                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
-                                  title="Print Lab Order"
-                                >
-                                  <Printer className="h-4 w-4" />
-                                  Print
-                                </button>
-                                <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
-                                  {batchOrder.status}
-                                </span>
-                              </div>
+                              <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
+                                {batchOrder.status}
+                              </span>
                             </div>
 
                             <div className="mt-3">
@@ -3508,34 +1626,9 @@ const PatientConsultationPage = () => {
                                   Created: {new Date(order.createdAt).toLocaleDateString()}
                                 </p>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => {
-                                    const printContent = `
-                                      <div style="padding: 20px; font-family: Arial, sans-serif;">
-                                        <h2>Lab Order</h2>
-                                        <p><strong>Test:</strong> ${order.labTest.name}</p>
-                                        <p><strong>Category:</strong> ${order.labTest.category || 'N/A'}</p>
-                                        <p><strong>Status:</strong> ${order.status}</p>
-                                        <p><strong>Date:</strong> ${new Date(order.createdAt).toLocaleString()}</p>
-                                        ${order.instructions ? `<p><strong>Instructions:</strong> ${order.instructions}</p>` : ''}
-                                      </div>
-                                    `;
-                                    const printWindow = window.open('', '_blank');
-                                    printWindow.document.write(printContent);
-                                    printWindow.document.close();
-                                    printWindow.print();
-                                  }}
-                                  className="flex items-center gap-1 px-3 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
-                                  title="Print Lab Order"
-                                >
-                                  <Printer className="h-4 w-4" />
-                                  Print
-                                </button>
-                                <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
-                                  {order.status}
-                                </span>
-                              </div>
+                              <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
+                                {order.status}
+                              </span>
                             </div>
 
                             {order.instructions && (
@@ -3561,13 +1654,8 @@ const PatientConsultationPage = () => {
                 <LabOrdering
                   visitId={visitId}
                   patientId={visit?.patient?.id}
-                  patient={visit?.patient}
-                  visit={visit}
                   onOrdersPlaced={handleOrdersPlaced}
-                  existingOrders={[
-                    ...(visit?.batchOrders?.filter(order => order.type === 'LAB') || []),
-                    ...(visit?.labTestOrders || [])
-                  ]}
+                  existingOrders={visit?.batchOrders?.filter(order => order.type === 'LAB') || []}
                 />
               </div>
             </div>
@@ -3577,84 +1665,213 @@ const PatientConsultationPage = () => {
             <div>
               <h3 className="text-lg font-semibold mb-4" style={{ color: '#0C0E0B' }}>Radiology Orders & Results</h3>
 
-              {/* Radiology Results & Orders Section */}
+              {/* Radiology Results Section - Show results when available */}
               {(() => {
                 const radiologyBatchOrders = visit?.batchOrders?.filter(order => order.type === 'RADIOLOGY') || [];
-                const radiologyOrdersFormatted = visit?.radiologyOrders || []; // Use formatted orders if available from backend
+                const hasRadiologyOrders = radiologyBatchOrders.length > 0;
+                const hasRadiologyResults = radiologyBatchOrders.some(order => order.radiologyResults && order.radiologyResults.length > 0);
 
-                // If we have neither results nor orders, just show the ordering interface
-                if (radiologyBatchOrders.length === 0 && radiologyOrdersFormatted.length === 0) return null;
+                return hasRadiologyResults ? (
+                  <div className="mb-6">
+                    <h4 className="font-medium mb-3 text-green-600" style={{ color: '#059669' }}>
+                      📊 Radiology Results Available
+                    </h4>
+                    <div className="space-y-4">
+                      {radiologyBatchOrders.map((batchOrder) => (
+                        batchOrder.radiologyResults && batchOrder.radiologyResults.length > 0 && (
+                          <div key={batchOrder.id} className="p-4 border rounded-lg border-green-200 bg-green-50">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <p className="font-medium text-green-800">
+                                  Order #{batchOrder.id} - Radiology Results
+                                </p>
+                                <p className="text-sm text-green-600">
+                                  Completed: {new Date(batchOrder.updatedAt).toLocaleDateString()}
+                                </p>
+                              </div>
+                              <span className="px-2 py-1 text-xs font-medium text-green-800 bg-green-200 rounded-full">
+                                COMPLETED
+                              </span>
+                            </div>
 
-                return (
-                  <div className="mb-6 space-y-4">
-                    {/* Show Results First */}
-                    {radiologyBatchOrders.some(order => order.radiologyResults?.length > 0) && (
-                      <div>
-                        <h4 className="font-medium mb-3 text-green-600" style={{ color: '#059669' }}>
-                          📊 Radiology Results Available
-                        </h4>
-                        <div className="space-y-3">
-                          {radiologyBatchOrders
-                            .filter(order => order.radiologyResults?.length > 0)
-                            .map((batchOrder) => (
-                              <div key={batchOrder.id} className="p-4 border rounded-lg border-green-200 bg-green-50 shadow-sm">
-                                <div className="flex justify-between items-start">
-                                  <div>
-                                    <p className="font-bold text-green-800">Order #{batchOrder.id} - Completed Results</p>
-                                    <div className="mt-2 space-y-2">
-                                      {batchOrder.radiologyResults.map((result, idx) => (
-                                        <div key={idx} className="bg-white p-3 rounded border border-green-100">
-                                          <p className="font-semibold text-green-900">{result.testType?.name || 'Scan'}</p>
-                                          <p className="text-sm text-gray-700 mt-1">{result.finding}</p>
-                                          {result.report && <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{result.report}</p>}
-                                        </div>
-                                      ))}
-                                    </div>
+                            <div className="space-y-3">
+                              {batchOrder.radiologyResults.map((result, index) => (
+                                <div key={result.id || index} className="p-3 bg-white rounded border">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <h5 className="font-medium text-gray-800">
+                                      {result.testType?.name || `Test ${index + 1}`}
+                                    </h5>
+                                    <span className="text-xs text-gray-500">
+                                      {new Date(result.createdAt).toLocaleDateString()}
+                                    </span>
                                   </div>
+
+                                  {/* Findings / Conclusion (new system) */}
+                                  {result.findings && (
+                                    <div className="mb-3">
+                                      <p className="text-sm font-medium text-gray-700 mb-1">Findings:</p>
+                                      <p className="text-base text-gray-700 bg-gray-50 p-2 rounded whitespace-pre-wrap">
+                                        {result.findings}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {result.conclusion && (
+                                    <div className="mb-3">
+                                      <p className="text-sm font-medium text-gray-700 mb-1">Conclusion:</p>
+                                      <p className="text-base text-gray-700 bg-gray-50 p-2 rounded whitespace-pre-wrap">
+                                        {result.conclusion}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* Backward compatibility for old results */}
+                                  {!result.findings && !result.conclusion && result.resultText && (
+                                    <div className="mb-2">
+                                      <p className="text-sm font-medium text-gray-700 mb-1">Result:</p>
+                                      <p className="text-base text-gray-700 bg-gray-50 p-2 rounded whitespace-pre-wrap">
+                                        {result.resultText}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {result.attachments && result.attachments.length > 0 && (
+                                    <div>
+                                      <p className="text-sm font-medium text-gray-700 mb-2">Images & Reports:</p>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {result.attachments.map((attachment, attIndex) => (
+                                          <div key={attIndex} className="relative group">
+                                            <div
+                                              className="cursor-pointer p-3 bg-gray-50 rounded border hover:bg-gray-100 transition-colors"
+                                              onClick={() => {
+                                                console.debug('[ImageClick] Image clicked, preparing ImageViewer data');
+                                                const allImages = result.attachments.map(att => ({
+                                                  fileUrl: getImageUrl(att.fileUrl),
+                                                  fileName: att.fileName
+                                                }));
+                                                console.debug('[ImageClick] Mapped images:', allImages);
+                                                openImageViewer(allImages, attIndex);
+                                              }}
+                                            >
+                                              <div className="flex items-center space-x-2 mb-2">
+                                                <Scan className="h-4 w-4 text-blue-500" />
+                                                <span className="text-sm font-medium text-gray-800 truncate">
+                                                  {attachment.fileName || `File ${attIndex + 1}`}
+                                                </span>
+                                              </div>
+                                              <div className="text-xs text-gray-500 mb-2">
+                                                {attachment.fileType || 'Unknown type'}
+                                              </div>
+
+                                              {/* Show image preview */}
+                                              <div className="relative w-full h-32 bg-gray-200 rounded overflow-hidden">
+                                                <img
+                                                  src={getImageUrl(attachment.fileUrl)}
+                                                  alt={attachment.fileName || `Image ${attIndex + 1}`}
+                                                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                                  onError={(e) => {
+                                                    e.target.style.display = 'none';
+                                                    e.target.nextSibling.style.display = 'flex';
+                                                  }}
+                                                />
+                                                <div className="hidden absolute inset-0 bg-gray-300 flex items-center justify-center">
+                                                  <Scan className="h-8 w-8 text-gray-500" />
+                                                </div>
+                                              </div>
+
+                                              <div className="mt-2 flex space-x-2">
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    console.debug('[ViewButton] View button clicked');
+                                                    const allImages = result.attachments.map(att => ({
+                                                      fileUrl: att.fileUrl,
+                                                      fileName: att.fileName
+                                                    }));
+                                                    console.debug('[ViewButton] Mapped images:', allImages);
+                                                    openImageViewer(allImages, attIndex);
+                                                  }}
+                                                  className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
+                                                >
+                                                  <Eye className="h-3 w-3 inline mr-1" />
+                                                  View
+                                                </button>
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const link = document.createElement('a');
+                                                    link.href = getImageUrl(attachment.fileUrl);
+                                                    link.download = attachment.fileName || 'download';
+                                                    link.click();
+                                                  }}
+                                                  className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 transition-colors"
+                                                >
+                                                  <Download className="h-3 w-3 inline mr-1" />
+                                                  Download
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                ) : hasRadiologyOrders ? (
+                  <div className="mb-6">
+                    <h4 className="font-medium mb-3 text-gray-600" style={{ color: '#6B7280' }}>
+                      ⏳ Radiology Orders Pending Results
+                    </h4>
+                    <div className="space-y-3">
+                      {radiologyBatchOrders.map((batchOrder) => (
+                        <div key={batchOrder.id} className="p-4 border rounded-lg border-gray-200 bg-gray-50">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-medium text-gray-800">
+                                Order #{batchOrder.id}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                Status: <span className="font-medium">{batchOrder.status}</span>
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                Created: {new Date(batchOrder.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <span className="px-2 py-1 text-xs font-medium text-gray-800 bg-gray-200 rounded-full">
+                              {batchOrder.status}
+                            </span>
+                          </div>
+
+                          <div className="mt-3">
+                            <p className="text-sm font-medium mb-2 text-gray-800">Tests Ordered:</p>
+                            {batchOrder.services?.map((service, index) => (
+                              <div key={index} className="text-sm mb-1 text-gray-700">
+                                • {service.investigationType?.name}
                               </div>
                             ))}
-                        </div>
-                      </div>
-                    )}
+                          </div>
 
-                    {/* Show Pending Orders */}
-                    {(radiologyBatchOrders.some(order => !order.radiologyResults || order.radiologyResults.length === 0) || radiologyOrdersFormatted.some(o => o.status === 'PENDING' || o.status === 'UNPAID')) && (
-                      <div>
-                        <h4 className="font-medium mb-3 text-yellow-600" style={{ color: '#D97706' }}>
-                          ⏳ Pending Radiology Orders
-                        </h4>
-                        <div className="space-y-3">
-                          {radiologyBatchOrders
-                            .filter(order => !order.radiologyResults || order.radiologyResults.length === 0)
-                            .map((batchOrder) => (
-                              <div key={batchOrder.id} className="p-4 border rounded-lg border-yellow-200 bg-yellow-50 shadow-sm">
-                                <div className="flex justify-between items-center">
-                                  <div>
-                                    <p className="font-bold text-yellow-800">Order #{batchOrder.id} - In Progress</p>
-                                    <div className="mt-1 flex gap-2">
-                                      {batchOrder.services?.map((s, i) => (
-                                        <span key={i} className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full border border-yellow-200">
-                                          {s.investigationType?.name || s.service?.name}
-                                        </span>
-                                      ))}
-                                    </div>
-                                    <p className="text-xs text-yellow-600 mt-2">
-                                      Status: <span className="font-bold">{batchOrder.status}</span> • Created: {new Date(batchOrder.createdAt).toLocaleDateString()}
-                                    </p>
-                                  </div>
-                                  <button
-                                    onClick={() => {/* Add print logic if needed */ }}
-                                    className="p-2 bg-white text-yellow-700 rounded-full border border-yellow-200 hover:bg-yellow-100"
-                                  >
-                                    <Printer className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
+                          {batchOrder.instructions && (
+                            <div className="mt-3">
+                              <p className="text-sm font-medium mb-1 text-gray-800">Instructions:</p>
+                              <p className="text-sm text-gray-700">{batchOrder.instructions}</p>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 mb-6">
+                    <Scan className="h-12 w-12 mx-auto mb-4" style={{ color: '#9CA3AF' }} />
+                    <p style={{ color: '#6B7280' }}>No radiology orders for this visit</p>
                   </div>
                 );
               })()}
@@ -3675,10 +1892,10 @@ const PatientConsultationPage = () => {
             <div>
               <h3 className="text-lg font-semibold mb-4" style={{ color: '#0C0E0B' }}>Nurse Services</h3>
 
-              {/* Nurse Services (Pending + Completed) */}
+              {/* Completed Nurse Services */}
               {visit?.nurseServiceAssignments && visit.nurseServiceAssignments.length > 0 ? (
                 <div className="mb-6">
-                  <h4 className="font-medium mb-3" style={{ color: '#0C0E0B' }}>Ordered Services</h4>
+                  <h4 className="font-medium mb-3" style={{ color: '#0C0E0B' }}>Completed Services</h4>
                   <div className="space-y-3">
                     {visit.nurseServiceAssignments.map((assignment) => (
                       <div key={assignment.id} className="p-4 border rounded-lg" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
@@ -3697,22 +1914,16 @@ const PatientConsultationPage = () => {
                             )}
                             <div className="flex items-center mt-2 text-xs" style={{ color: '#6B7280' }}>
                               <span>Assigned to: {assignment.assignedNurse.fullname}</span>
-                              {assignment.status === 'COMPLETED' && assignment.completedAt && (
-                                <>
-                                  <span className="mx-2">•</span>
-                                  <span>Completed: {new Date(assignment.completedAt).toLocaleString()}</span>
-                                </>
-                              )}
+                              <span className="mx-2">•</span>
+                              <span>Completed: {new Date(assignment.completedAt).toLocaleString()}</span>
                             </div>
                           </div>
                           <div className="text-right">
-                            <span
-                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${assignment.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}
-                            >
-                              {assignment.status === 'COMPLETED' ? 'Completed' : 'Pending'}
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              Completed
                             </span>
                             <p className="text-sm font-medium mt-1" style={{ color: '#0C0E0B' }}>
-                              ETB {(assignment.customPrice ?? assignment.service.price).toLocaleString()}
+                              ETB {assignment.service.price.toLocaleString()}
                             </p>
                           </div>
                         </div>
@@ -3781,26 +1992,26 @@ const PatientConsultationPage = () => {
                       <div key={order.id} className="p-4 border rounded-lg" style={{ borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="font-medium" style={{ color: '#0C0E0B' }}>
-                                  {order.name}{order.strength ? ` ${order.strength}` : ''}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleDeleteMedication(order.id)}
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-                                  title="Delete medication"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="mt-2 grid grid-cols-1 gap-4 text-sm">
+                            <p className="font-medium" style={{ color: '#0C0E0B' }}>{order.name}</p>
+                            <p className="text-sm" style={{ color: '#6B7280' }}>
+                              {order.strength} • {order.dosageForm}
+                            </p>
+                            <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
                               <div>
                                 <span className="font-medium" style={{ color: '#0C0E0B' }}>Quantity:</span>
                                 <span className="ml-2" style={{ color: '#6B7280' }}>{order.quantity}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Frequency:</span>
+                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.frequency}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Duration:</span>
+                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.duration}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium" style={{ color: '#0C0E0B' }}>Category:</span>
+                                <span className="ml-2" style={{ color: '#6B7280' }}>{order.category || 'N/A'}</span>
                               </div>
                             </div>
 
@@ -3867,15 +2078,6 @@ const PatientConsultationPage = () => {
                   existingOrders={visit?.medicationOrders || []}
                 />
               </div>
-            </div>
-          )}
-
-          {activeTab === 'compound-prescription' && (
-            <div>
-              <CompoundPrescriptionBuilder
-                visit={visit}
-                onSaved={handleOrdersPlaced}
-              />
             </div>
           )}
 
@@ -3967,25 +2169,6 @@ const PatientConsultationPage = () => {
                     ⚠️ This action cannot be undone. Once completed, the visit will be finalized.
                   </p>
                 </div>
-
-                {isDermatologyDoctor && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={countAsMedicalTreated}
-                        onChange={(e) => setCountAsMedicalTreated(e.target.checked)}
-                        className="mt-1"
-                      />
-                      <div>
-                        <p className="text-sm font-semibold text-blue-900">Count this patient as Medical treated?</p>
-                        <p className="text-xs text-blue-700 mt-1">
-                          If checked, this completion is counted in Admin Doctor Reports under Medical Treated (Dermatology).
-                        </p>
-                      </div>
-                    </label>
-                  </div>
-                )}
 
                 <div className="flex justify-end gap-3">
                   <button

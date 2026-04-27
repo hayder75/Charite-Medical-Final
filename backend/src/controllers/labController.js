@@ -4,20 +4,48 @@ const { createPDFDocument, generatePDF } = require('../utils/pdfGenerator');
 const fs = require('fs');
 const path = require('path');
 
+// Redundant printer removed, using utility instead
+
+// Validation schemas
 const individualLabResultSchema = z.object({
   labOrderId: z.number(),
   serviceId: z.number(),
   templateId: z.string(),
-  results: z.object({}).passthrough(),
+  results: z.object({}).passthrough(), // Dynamic object for template fields
   additionalNotes: z.string().optional()
 });
 
+// Get lab templates
+// simple in-memory cache for templates; invalidated by administrative changes (not shown here)
+let templatesCache = null;
+let templatesCacheTime = 0;
+const TEMPLATE_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+
 exports.getTemplates = async (req, res) => {
   try {
+    const { category } = req.query;
+    const now = Date.now();
+
+    // return cached copy if still fresh and no category filter
+    if (!category && templatesCache && now - templatesCacheTime < TEMPLATE_CACHE_TTL) {
+      return res.json({ templates: templatesCache });
+    }
+
+    const where = { isActive: true };
+    if (category) {
+      where.category = category;
+    }
+
     const templates = await prisma.labTestTemplate.findMany({
-      where: { isActive: true },
+      where,
       orderBy: { category: 'asc' }
     });
+
+    if (!category) {
+      templatesCache = templates;
+      templatesCacheTime = now;
+    }
+
     res.json({ templates });
   } catch (error) {
     console.error('Error fetching lab templates:', error);
@@ -25,164 +53,691 @@ exports.getTemplates = async (req, res) => {
   }
 };
 
+// Get lab orders (batch orders + walk-in orders + new lab test orders)
 exports.getOrders = async (req, res) => {
   try {
-    const { status, date } = req.query;
-    const where = {};
-    
-    if (status) {
-      where.status = status;
+    const { status, page = 1, limit = 30, search } = req.query;
+    const pageNum = parseInt(page, 10) || 1;
+    const pageLimit = parseInt(limit, 10) || 30;
+    const skip = (pageNum - 1) * pageLimit;
+
+    const statusFilter = status === 'COMPLETED'
+      ? { in: ['COMPLETED'] }
+      : { in: ['PAID', 'QUEUED', 'IN_PROGRESS'] };
+
+    // Build where clause with search filter
+    const whereClause = {
+      OR: [
+        {
+          visitId: { not: null },
+          status: statusFilter
+        },
+        {
+          isWalkIn: true,
+          status: statusFilter
+        },
+        {
+          visitId: { not: null },
+          status: 'UNPAID',
+          visit: { isEmergency: true }
+        }
+      ]
+    };
+
+    // Add patient name search if provided
+    if (search) {
+      whereClause.AND = [
+        {
+          OR: [
+            { patient: { name: { contains: search, mode: 'insensitive' } } },
+            { visit: { patient: { name: { contains: search, mode: 'insensitive' } } } }
+          ]
+        }
+      ];
     }
-    
-    if (date) {
-      const startOfDay = new Date(date);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(date);
-      endOfDay.setHours(23, 59, 59, 999);
-      where.createdAt = {
-        gte: startOfDay,
-        lte: endOfDay
-      };
-    }
 
-    const [batchOrders, walkInOrders, labTestOrders] = await Promise.all([
-      prisma.batchOrder.findMany({
-        where: { type: 'LAB', ...where },
-        include: { patient: true, services: { include: { investigationType: true } } },
-        orderBy: { createdAt: 'desc' }
-      }),
-      prisma.labOrder.findMany({
-        where: { isWalkIn: true, ...where },
-        include: { patient: true, type: true, labResults: true },
-        orderBy: { createdAt: 'desc' }
-      }),
-      prisma.labTestOrder.findMany({
-        where,
-        include: { labTest: { include: { resultFields: { orderBy: { displayOrder: 'asc' } } } }, patient: true, doctor: true, results: true },
-        orderBy: { createdAt: 'desc' }
-      })
-    ]);
+    // Get total count for pagination
+    const totalCount = await prisma.labTestOrder.count({ where: whereClause });
 
-    const labTestLinkedBatchIds = new Set(
-      labTestOrders.map((order) => order.batchOrderId).filter(Boolean)
-    );
-    const labTestLinkedVisitIds = new Set(
-      labTestOrders.map((order) => order.visitId).filter(Boolean)
-    );
-
-    const filteredBatchOrders = batchOrders.filter((order) => {
-      const hasServices = Array.isArray(order.services) && order.services.length > 0;
-      const linkedByBatchId = labTestLinkedBatchIds.has(order.id);
-      const linkedByVisitId = Boolean(order.visitId) && labTestLinkedVisitIds.has(order.visitId);
-      const looksLikeTemplatePlaceholder = /lab tests ordered by doctor/i.test(order.instructions || '');
-
-      // Hide legacy placeholder cards when the same request is already represented by labTestOrders.
-      if (!hasServices && (linkedByBatchId || linkedByVisitId || looksLikeTemplatePlaceholder)) {
-        return false;
-      }
-      return true;
+    // Get NEW lab test orders (new system)
+    const labTestOrders = await prisma.labTestOrder.findMany({
+      where: whereClause,
+      include: {
+        labTest: {
+          include: {
+            service: true,
+            group: true,
+            resultFields: {
+              orderBy: { displayOrder: 'asc' }
+            }
+          }
+        },
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            mobile: true,
+            email: true
+          }
+        },
+        doctor: {
+          select: {
+            id: true,
+            fullname: true,
+            qualifications: true
+          }
+        },
+        visit: {
+          select: {
+            id: true,
+            visitUid: true,
+            status: true,
+            isEmergency: true
+          }
+        },
+        results: {
+          include: {
+            attachments: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: pageLimit
     });
 
-    res.json({ batchOrders: filteredBatchOrders, walkInOrders, labTestOrders });
+    // Get ALL batchOrderIds that have labTestOrders (new system)
+    // This ensures we always exclude them from the old system fetch
+    const allLabTestOrders = await prisma.labTestOrder.findMany({
+      where: { batchOrderId: { not: null } },
+      select: { batchOrderId: true }
+    });
+    const batchOrderIdsWithLabTestOrders = new Set(
+      allLabTestOrders.map(order => order.batchOrderId)
+    );
+
+    const batchOrders = await prisma.batchOrder.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { type: 'LAB' },
+              { type: 'MIXED' }
+            ]
+          },
+          {
+            OR: [
+              // Regular orders that are paid
+              {
+                status: statusFilter
+              },
+              // Emergency orders that are unpaid (treated as pre-paid)
+              {
+                status: 'UNPAID',
+                visit: {
+                  isEmergency: true
+                }
+              }
+            ]
+          },
+          // EXCLUDE batchOrders that have labTestOrders (new system)
+          {
+            id: {
+              notIn: Array.from(batchOrderIdsWithLabTestOrders)
+            }
+          }
+        ]
+      },
+      include: {
+        services: {
+          include: {
+            service: true,
+            investigationType: true
+          }
+        },
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            mobile: true,
+            email: true
+          }
+        },
+        doctor: {
+          select: {
+            id: true,
+            fullname: true,
+            qualifications: true
+          }
+        },
+        visit: {
+          select: {
+            id: true,
+            visitUid: true,
+            status: true,
+            isEmergency: true
+          }
+        },
+        attachments: true,
+        detailedResults: {
+          include: {
+            template: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    // Get walk-in lab orders
+    const walkInOrders = await prisma.labOrder.findMany({
+      where: {
+        isWalkIn: true,
+        status: statusFilter
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            mobile: true,
+            email: true
+          }
+        },
+        type: true,
+        labResults: {
+          include: {
+            testType: true,
+            attachments: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    // Group walk-in orders by patient and billing
+    const groupedOrders = {};
+    walkInOrders.forEach(order => {
+      const key = `${order.patientId}-${order.billingId || 'no-billing'}`;
+      if (!groupedOrders[key]) {
+        groupedOrders[key] = {
+          id: order.id, // Use first order ID as the group ID
+          patientId: order.patientId,
+          patient: order.patient,
+          billingId: order.billingId,
+          status: order.status,
+          instructions: order.instructions,
+          createdAt: order.createdAt,
+          isWalkIn: true,
+          services: [] // Array of individual orders as services
+        };
+      }
+
+      // Add this order as a service
+      groupedOrders[key].services.push({
+        id: order.id,
+        service: order.type, // The investigation type
+        investigationType: order.type,
+        labResults: order.labResults,
+        status: order.status // CRITICAL: Include status for grouping logic
+      });
+
+      // Update group status based on ALL orders in the group
+      const groupServices = groupedOrders[key].services;
+      const allCompleted = groupServices.every(s => s.status === 'COMPLETED');
+      const anyInProgress = groupServices.some(s => s.status === 'IN_PROGRESS');
+
+      if (allCompleted) {
+        groupedOrders[key].status = 'COMPLETED';
+      } else if (anyInProgress) {
+        groupedOrders[key].status = 'IN_PROGRESS';
+      } else {
+        groupedOrders[key].status = order.status;
+      }
+    });
+
+    const groupedWalkInOrders = Object.values(groupedOrders);
+
+    // Group new lab test orders by patient/visit for easier display
+    // Group new lab test orders by visit + billingId (or batchOrderId) to separate different orders
+    // CRITICAL: Must group by billingId/batchOrderId to prevent mixing orders from different billings
+    const groupedLabTestOrders = {};
+    labTestOrders.forEach(order => {
+      // For visit-based orders: group by visitId + billingId (or batchOrderId as fallback)
+      // This ensures orders from different billings are kept separate
+      // For walk-in orders: group by patientId + billingId
+      const key = order.visitId
+        ? `visit-${order.visitId}-billing-${order.billingId || order.batchOrderId || 'no-billing'}`
+        : `walkin-${order.patientId}-billing-${order.billingId || 'no-billing'}`;
+
+      if (!groupedLabTestOrders[key]) {
+        groupedLabTestOrders[key] = {
+          id: order.id, // Use first order ID as group ID
+          batchOrderId: order.batchOrderId, // Include batchOrderId for reference
+          visitId: order.visitId,
+          patientId: order.patientId,
+          patient: order.patient,
+          doctor: order.doctor,
+          visit: order.visit,
+          status: order.status,
+          instructions: order.instructions || 'Lab tests ordered by doctor',
+          createdAt: order.createdAt,
+          isWalkIn: order.isWalkIn,
+          billingId: order.billingId,
+          orders: [] // This will contain all individual lab test orders
+        };
+      }
+
+      // Always add the order to the orders array - this is critical for frontend to display
+      // Include ALL necessary fields for the frontend to display properly
+      groupedLabTestOrders[key].orders.push({
+        id: order.id,
+        labTestId: order.labTestId,
+        batchOrderId: order.batchOrderId,
+        labTest: order.labTest ? {
+          id: order.labTest.id,
+          name: order.labTest.name,
+          code: order.labTest.code,
+          description: order.labTest.description,
+          price: order.labTest.price,
+          category: order.labTest.category,
+          resultFields: order.labTest.resultFields || [], // CRITICAL: Must include resultFields
+          group: order.labTest.group || null
+        } : null,
+        status: order.status,
+        instructions: order.instructions,
+        results: order.results || [], // Array of LabTestResult objects
+        patientId: order.patientId,
+        visitId: order.visitId,
+        doctorId: order.doctorId,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt
+      });
+
+      // Update group status based on ALL orders in the group
+      const groupOrders = groupedLabTestOrders[key].orders;
+      const allCompleted = groupOrders.every(o => o.status === 'COMPLETED');
+      const anyInProgress = groupOrders.some(o => o.status === 'IN_PROGRESS');
+
+      if (allCompleted) {
+        groupedLabTestOrders[key].status = 'COMPLETED';
+      } else if (anyInProgress) {
+        groupedLabTestOrders[key].status = 'IN_PROGRESS';
+      } else {
+        // If there are PAID orders, status should be PAID (for new orders waiting to be processed)
+        groupedLabTestOrders[key].status = order.status;
+      }
+    });
+
+    // Convert grouped orders to array and log details
+    const groupedOrdersArray = Object.values(groupedLabTestOrders);
+
+
+    res.json({
+      batchOrders, // Old system
+      walkInOrders: groupedWalkInOrders, // Old system walk-ins
+      labTestOrders: groupedOrdersArray, // New system
+      pagination: {
+        total: totalCount,
+        page: pageNum,
+        limit: pageLimit,
+        totalPages: Math.ceil(totalCount / pageLimit)
+      }
+    });
   } catch (error) {
-    console.error('Error fetching lab orders:', error);
+    console.error('❌ [getOrders] Error:', error);
     res.status(500).json({ error: error.message });
   }
 };
 
+// Save individual lab result
 exports.saveIndividualLabResult = async (req, res) => {
   try {
-    const { labOrderId, serviceId, templateId, results, additionalNotes } = req.body;
-    const labTechnicianId = req.user.id;
-    const validated = individualLabResultSchema.parse(req.body);
 
-    const existingResult = await prisma.labResult.findFirst({
-      where: { orderId: validated.labOrderId, testTypeId: validated.serviceId }
+    const data = individualLabResultSchema.parse(req.body);
+    const labTechnicianId = req.user.id;
+
+    // Check if it's a batch order or regular lab order (walk-in)
+    let batchOrder = await prisma.batchOrder.findUnique({
+      where: { id: data.labOrderId },
+      include: {
+        services: {
+          include: {
+            service: true,
+            investigationType: true
+          }
+        },
+        patient: true,
+        visit: true
+      }
     });
 
-    let result;
-    if (existingResult) {
-      result = await prisma.labResult.update({
-        where: { id: existingResult.id },
-        data: {
-          resultText: JSON.stringify(validated.results),
-          additionalNotes: validated.additionalNotes || null,
-          status: 'COMPLETED',
-          verifiedBy: labTechnicianId,
-          verifiedAt: new Date()
+    let isWalkIn = false;
+    let labOrder = null;
+
+    if (!batchOrder) {
+      // Check if it's a regular lab order (walk-in)
+      labOrder = await prisma.labOrder.findUnique({
+        where: { id: data.labOrderId },
+        include: {
+          patient: true,
+          type: true
         }
       });
-    } else {
-      result = await prisma.labResult.create({
-        data: {
-          orderId: validated.labOrderId,
-          testTypeId: validated.serviceId,
-          resultText: JSON.stringify(validated.results),
-          additionalNotes: validated.additionalNotes || null,
-          status: 'COMPLETED',
-          verifiedBy: labTechnicianId,
-          verifiedAt: new Date()
+
+      if (!labOrder) {
+        return res.status(404).json({ error: 'Lab order not found' });
+      }
+
+      isWalkIn = labOrder.isWalkIn;
+
+      // For walk-in orders, save to LabResult model
+      if (isWalkIn) {
+        const template = await prisma.labTestTemplate.findUnique({
+          where: { id: data.templateId }
+        });
+
+        if (!template) {
+          return res.status(404).json({ error: 'Lab template not found' });
         }
+
+        // Check if result already exists
+        const existingResult = await prisma.labResult.findFirst({
+          where: {
+            orderId: data.labOrderId,
+            testTypeId: labOrder.typeId
+          }
+        });
+
+        if (existingResult) {
+          // Update existing result
+          const updatedResult = await prisma.labResult.update({
+            where: { id: existingResult.id },
+            data: {
+              resultText: JSON.stringify(data.results),
+              additionalNotes: data.additionalNotes,
+              status: 'COMPLETED'
+            }
+          });
+
+          return res.json({
+            message: 'Lab result updated successfully',
+            result: updatedResult
+          });
+        } else {
+          // Create new result
+          const newResult = await prisma.labResult.create({
+            data: {
+              orderId: data.labOrderId,
+              testTypeId: labOrder.typeId,
+              resultText: JSON.stringify(data.results),
+              additionalNotes: data.additionalNotes,
+              status: 'COMPLETED'
+            },
+            include: {
+              testType: true
+            }
+          });
+
+          return res.json({
+            message: 'Lab result saved successfully',
+            result: newResult
+          });
+        }
+      }
+    }
+
+    // Check if service exists in this batch order
+    const service = batchOrder.services.find(s => s.id === data.serviceId);
+    if (!service) {
+      return res.status(404).json({ error: 'Service not found in this order' });
+    }
+
+    // Check if template exists (only if templateId is provided)
+    let template = null;
+    if (data.templateId) {
+      template = await prisma.labTestTemplate.findUnique({
+        where: { id: data.templateId }
+      });
+
+      if (!template) {
+        return res.status(404).json({ error: 'Lab template not found' });
+      }
+    } else {
+      // If no template, additionalNotes is optional (all fields are now optional)
+      // No validation needed
+    }
+
+    // Check if result already exists for this service
+    const existingResult = await prisma.detailedLabResult.findFirst({
+      where: {
+        labOrderId: data.labOrderId,
+        serviceId: data.serviceId,
+        templateId: data.templateId || null
+      }
+    });
+
+    if (existingResult) {
+      // Update existing result
+      console.log('📝 Updating existing result:', {
+        resultId: existingResult.id,
+        serviceId: data.serviceId,
+        resultsCount: Object.keys(data.results || {}).length,
+        templateId: data.templateId
+      });
+
+      const updatedResult = await prisma.detailedLabResult.update({
+        where: { id: existingResult.id },
+        data: {
+          results: data.results || {},
+          additionalNotes: data.additionalNotes || '',
+          updatedAt: new Date()
+        }
+      });
+
+      console.log('✅ Result updated:', {
+        resultId: updatedResult.id,
+        resultsCount: Object.keys(updatedResult.results || {}).length
+      });
+
+      res.json({
+        message: 'Lab result updated successfully',
+        result: updatedResult
+      });
+    } else {
+      // Create new result
+      console.log('📝 Creating new result:', {
+        labOrderId: data.labOrderId,
+        serviceId: data.serviceId,
+        templateId: data.templateId,
+        resultsCount: Object.keys(data.results || {}).length
+      });
+
+      const newResult = await prisma.detailedLabResult.create({
+        data: {
+          labOrderId: data.labOrderId,
+          serviceId: data.serviceId,
+          templateId: data.templateId || null, // Allow null for services without templates
+          results: data.results || {},
+          additionalNotes: data.additionalNotes || ''
+        }
+      });
+
+      console.log('✅ Result created:', {
+        resultId: newResult.id,
+        resultsCount: Object.keys(newResult.results || {}).length
+      });
+
+      res.json({
+        message: 'Lab result saved successfully',
+        result: newResult
       });
     }
 
-    res.json({ success: true, result });
+    // Update service status to COMPLETED when result is saved
+    await prisma.batchOrderService.update({
+      where: { id: data.serviceId },
+      data: { status: 'COMPLETED' }
+    });
+
   } catch (error) {
     console.error('Error saving lab result:', error);
-    if (error.name === 'ZodError') return res.status(400).json({ error: error.errors });
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: error.errors });
+    }
     res.status(500).json({ error: error.message });
   }
 };
 
+// Get detailed lab results for a specific order
 exports.getDetailedResults = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const batchOrder = await prisma.batchOrder.findUnique({
-      where: { id: parseInt(orderId) },
-      include: { patient: true, services: { include: { investigationType: true } }, detailedResults: { include: { template: true } }, doctor: { select: { fullname: true } } }
+
+    console.log('📋 Fetching detailed results for orderId:', orderId);
+
+    const detailedResultsRaw = await prisma.detailedLabResult.findMany({
+      where: {
+        labOrderId: parseInt(orderId)
+      },
+      include: {
+        template: true
+      },
+      orderBy: { createdAt: 'desc' }
     });
 
-    if (batchOrder) return res.json({ order: batchOrder, isWalkIn: false });
+    // Fetch verifiedBy user for each result
+    const detailedResults = await Promise.all(detailedResultsRaw.map(async (result) => {
+      let verifiedByUser = null;
+      if (result.verifiedBy) {
+        try {
+          verifiedByUser = await prisma.user.findUnique({
+            where: { id: result.verifiedBy },
+            select: { id: true, fullname: true, role: true }
+          });
+        } catch (err) {
+          console.error('Error fetching verifiedBy user:', err);
+        }
+      }
+      return {
+        ...result,
+        verifiedByUser: verifiedByUser
+      };
+    }));
 
-    const walkInOrder = await prisma.labOrder.findUnique({
-      where: { id: parseInt(orderId) },
-      include: { patient: true, type: true, labResults: { include: { testType: true } } }
+    console.log('📋 Found', detailedResults.length, 'detailed results');
+    detailedResults.forEach(result => {
+      console.log('  - ServiceId:', result.serviceId, 'TemplateId:', result.templateId, 'Results keys:', Object.keys(result.results || {}).length);
     });
 
-    if (walkInOrder) return res.json({ order: walkInOrder, isWalkIn: true });
-    res.status(404).json({ error: 'Order not found' });
+    res.json({ detailedResults });
   } catch (error) {
-    console.error('Error fetching detailed results:', error);
+    console.error('Error fetching detailed lab results:', error);
     res.status(500).json({ error: error.message });
   }
 };
 
+// Send lab results to doctor
 exports.sendToDoctor = async (req, res) => {
   try {
     const { labOrderId } = req.params;
     const labTechnicianId = req.user.id;
-    const orderId = parseInt(labOrderId);
 
-    let batchOrder = await prisma.batchOrder.findUnique({ where: { id: orderId }, include: { visit: true } });
+    // Check if batch order exists
+    const batchOrder = await prisma.batchOrder.findUnique({
+      where: { id: parseInt(labOrderId) },
+      include: {
+        services: true,
+        visit: true
+      }
+    });
 
     if (!batchOrder) {
-      const walkInOrder = await prisma.labOrder.findUnique({ where: { id: orderId } });
-      if (walkInOrder && walkInOrder.isWalkIn) {
-        await prisma.labOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
-        return res.json({ message: 'Lab results sent to doctor successfully', batchOrderId: orderId, visitStatus: 'COMPLETED' });
+      return res.status(404).json({ error: 'Lab order not found' });
+    }
+
+    // Check if all relevant services have results
+    // For lab "Send to Doctor", we only strictly require lab services to be complete
+    const labServices = batchOrder.services.filter(s =>
+      s.investigationType?.category === 'LAB' || s.service?.code?.startsWith('LAB_')
+    );
+
+    let allLabServicesHaveResults;
+    if (batchOrder.visit.isEmergency) {
+      allLabServicesHaveResults = labServices.length === 0 || labServices.some(s => s.status === 'COMPLETED' || s.status === 'IN_PROGRESS');
+    } else {
+      allLabServicesHaveResults = labServices.length === 0 || labServices.every(s => s.status === 'COMPLETED' || s.status === 'IN_PROGRESS');
+    }
+
+    if (labServices.length > 0 && !allLabServicesHaveResults) {
+      const errorMessage = batchOrder.visit.isEmergency
+        ? 'At least one laboratory service must have results before sending to doctor'
+        : 'All laboratory services must have results before sending to doctor';
+      return res.status(400).json({ error: errorMessage });
+    }
+
+    // Update all LAB services to COMPLETED if they weren't already
+    await prisma.batchOrderService.updateMany({
+      where: {
+        batchOrderId: parseInt(labOrderId),
+        OR: [
+          { investigationType: { category: 'LAB' } },
+          { service: { code: { startsWith: 'LAB_' } } }
+        ]
+      },
+      data: { status: 'COMPLETED' }
+    });
+
+    // Re-fetch batch order to get updated service statuses
+    const updatedBatchOrder = await prisma.batchOrder.findUnique({
+      where: { id: parseInt(labOrderId) },
+      include: { services: true }
+    });
+
+    // Determine if the WHOLE batch order is now complete
+    const allServicesCompleted = updatedBatchOrder.services.every(s => s.status === 'COMPLETED');
+
+    if (allServicesCompleted) {
+      // Update batch order status to COMPLETED
+      await prisma.batchOrder.update({
+        where: { id: parseInt(labOrderId) },
+        data: { status: 'COMPLETED' }
+      });
+    }
+
+    // Update visit status based on ALL ongoing investigations
+    await checkAndUpdateVisitStatus(batchOrder.visitId);
+
+    // Create audit log
+    await prisma.auditLog.create({
+      data: {
+        userId: labTechnicianId,
+        action: 'LAB_RESULTS_SENT_TO_DOCTOR',
+        entity: 'BatchOrder',
+        entityId: parseInt(labOrderId),
+        details: JSON.stringify({
+          batchOrderId: parseInt(labOrderId),
+          servicesCount: batchOrder.services.length,
+          visitId: batchOrder.visitId
+        }),
+        ip: req.ip,
+        userAgent: req.get('User-Agent')
       }
-    }
+    });
 
-    if (!batchOrder) return res.status(404).json({ error: 'Lab order not found' });
+    const updatedVisit = await prisma.visit.findUnique({
+      where: { id: batchOrder.visitId },
+      select: { status: true }
+    });
 
-    await prisma.batchOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
+    res.json({
+      message: 'Lab results sent to doctor successfully',
+      batchOrderId: parseInt(labOrderId),
+      visitStatus: updatedVisit?.status || 'IN_DOCTOR_QUEUE'
+    });
 
-    let updatedVisit;
-    if (batchOrder.visitId) {
-      updatedVisit = await checkAndUpdateVisitStatus(batchOrder.visitId);
-    }
-
-    res.json({ message: 'Lab results sent to doctor successfully', batchOrderId: orderId, visitStatus: updatedVisit?.status || 'IN_DOCTOR_QUEUE' });
   } catch (error) {
     console.error('Error sending lab results to doctor:', error);
     res.status(500).json({ error: error.message });
@@ -201,655 +756,299 @@ exports.updateLabOrderStatus = async (req, res) => {
   }
 };
 
+// Generate PDF for lab results (both batch orders and walk-in orders)
 exports.generateLabResultsPDF = async (req, res) => {
   try {
     const { batchOrderId } = req.params;
+    const labTechnicianId = req.user.id;
     const orderId = parseInt(batchOrderId);
 
+    // Try to get batch order first
     let batchOrder = await prisma.batchOrder.findUnique({
       where: { id: orderId },
-      include: { patient: true, services: { include: { investigationType: true } }, detailedResults: { include: { template: true } }, doctor: { select: { fullname: true } } }
+      include: {
+        patient: true,
+        services: {
+          include: {
+            service: true,
+            investigationType: true
+          }
+        },
+        detailedResults: {
+          include: {
+            template: true
+          }
+        },
+        doctor: {
+          select: {
+            fullname: true
+          }
+        }
+      }
     });
 
     let isWalkIn = false;
     let walkInOrder = null;
+    let walkInResults = [];
 
+    // If not a batch order, check if it's a walk-in order
     if (!batchOrder) {
-      walkInOrder = await prisma.labOrder.findUnique({ where: { id: orderId }, include: { patient: true, type: true, labResults: { include: { testType: true } } } });
-      if (!walkInOrder) return res.status(404).json({ error: 'Lab order not found' });
-      if (!walkInOrder.isWalkIn) return res.status(400).json({ error: 'This endpoint only supports batch orders and walk-in orders' });
+      walkInOrder = await prisma.labOrder.findUnique({
+        where: { id: orderId },
+        include: {
+          patient: true,
+          type: true,
+          labResults: {
+            include: {
+              testType: true
+            }
+          }
+        }
+      });
+
+      if (!walkInOrder) {
+        return res.status(404).json({ error: 'Lab order not found' });
+      }
+
+      if (!walkInOrder.isWalkIn) {
+        return res.status(400).json({ error: 'This endpoint only supports batch orders and walk-in orders' });
+      }
+
       isWalkIn = true;
+
+      // Get templates for walk-in results
+      for (const labResult of walkInOrder.labResults) {
+        if (labResult.resultText) {
+          try {
+            const template = await prisma.labTestTemplate.findFirst({
+              where: {
+                category: labResult.testType.category || 'GENERAL'
+              }
+            });
+
+            if (template) {
+              walkInResults.push({
+                serviceName: labResult.testType.name,
+                results: JSON.parse(labResult.resultText || '{}'),
+                additionalNotes: labResult.additionalNotes || '',
+                template: template
+              });
+            } else {
+              // Fallback: create a simple result without template
+              walkInResults.push({
+                serviceName: labResult.testType.name,
+                results: JSON.parse(labResult.resultText || '{}'),
+                additionalNotes: labResult.additionalNotes || '',
+                template: null
+              });
+            }
+          } catch (err) {
+            console.error('Error processing walk-in result:', err);
+          }
+        }
+      }
     }
 
-    const formatDateTime = (date) => new Date(date).toLocaleString('en-US');
+    // Get lab technician info
+    const labTechnician = await prisma.user.findUnique({
+      where: { id: labTechnicianId },
+      select: { fullname: true, username: true }
+    });
+
+    const formatDate = (date) => {
+      return new Date(date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    };
+
+    const formatDateTime = (date) => {
+      return new Date(date).toLocaleString('en-US');
+    };
+
+    // Get patient and order info (from either batch order or walk-in order)
     const patient = batchOrder?.patient || walkInOrder?.patient;
     const orderDate = batchOrder?.createdAt || walkInOrder?.createdAt;
     const orderStatus = batchOrder?.status || walkInOrder?.status;
 
-    if (patient?.dob) {
-      const today = new Date();
-      const birthDate = new Date(patient.dob);
-      patient.age = Math.floor((today - birthDate) / (365.25 * 24 * 60 * 60 * 1000));
-    }
-
+    // Build PDF content using utility-friendly format
     const pdfContent = [];
-    pdfContent.push({ text: 'Laboratory Test Results', style: 'subheader', margin: [0, 0, 0, 20] });
-    pdfContent.push({ text: 'Patient Information', style: 'sectionTitle' });
-    pdfContent.push({ columns: [{ text: `Name: ${patient.name}`, style: 'field' }, { text: `ID: ${patient.id}`, style: 'field' }, { text: `Gender: ${patient.gender || 'N/A'}`, style: 'field' }], margin: [0, 0, 0, 5] });
-    pdfContent.push({ columns: [{ text: `Age: ${patient.age || 'N/A'}`, style: 'field' }, { text: `Blood Type: ${patient.bloodType || 'N/A'}`, style: 'field' }, { text: `Phone: ${patient.mobile || 'N/A'}`, style: 'field' }], margin: [0, 0, 0, 15] });
-    pdfContent.push({ text: `Order ID: ${batchOrderId} | Date: ${formatDateTime(orderDate)} | Status: ${orderStatus?.replace(/_/g, ' ') || 'N/A'}`, style: 'field', margin: [0, 0, 0, 15] });
-    pdfContent.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 0, 0, 15] });
-    pdfContent.push({ text: 'Laboratory Test Results', style: 'sectionTitle' });
 
-    if (!isWalkIn && batchOrder?.detailedResults) {
-      batchOrder.detailedResults.forEach((result, index) => {
-        pdfContent.push({ text: `${index + 1}. ${result.template?.name || 'Test'}`, style: 'testTitle', margin: [0, 10, 0, 5] });
-        if (result.results && Object.keys(result.results).length > 0) {
-          const tableBody = [];
-          Object.entries(result.results).forEach(([key, value]) => tableBody.push([key, String(value || '-')]));
-          pdfContent.push({ table: { headerRows: 1, widths: ['*', '*'], body: tableBody }, layout: 'lightHorizontalLines', margin: [0, 5, 0, 10] });
-        }
-        if (result.additionalNotes) pdfContent.push({ text: `Notes: ${result.additionalNotes}`, style: 'notes', margin: [0, 5, 0, 15] });
-      });
-    }
-
-    pdfContent.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 20, 0, 10] });
-    pdfContent.push({ text: 'Generated by lab technician', style: 'footer', alignment: 'right' });
-
-    const docDefinition = {
-      content: pdfContent,
-      styles: {
-        subheader: { fontSize: 18, bold: true, margin: [0, 0, 0, 10] },
-        sectionTitle: { fontSize: 14, bold: true, margin: [0, 10, 0, 5] },
-        field: { fontSize: 10, margin: [0, 2, 0, 2] },
-        testTitle: { fontSize: 12, bold: true },
-        resultText: { fontSize: 10 },
-        notes: { fontSize: 10, italics: true },
-        footer: { fontSize: 8, color: 'gray' }
-      }
-    };
-
-    const fileName = `lab-results-${orderId}-${Date.now()}.pdf`;
-    const filePath = `uploads/${fileName}`;
-    await generatePDF(docDefinition, filePath);
-    res.sendFile(path.resolve(filePath));
-  } catch (error) {
-    console.error('Error generating lab results PDF:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-async function checkAndUpdateVisitStatus(visitId) {
-  try {
-    const visit = await prisma.visit.findUnique({
-      where: { id: visitId },
-      include: {
-        labOrders: true,
-        radiologyOrders: true,
-        batchOrders: {
-          where: { type: 'LAB' },
-          include: {
-            services: { select: { status: true } },
-            labTestOrders: { select: { status: true } }
-          }
-        }
-      }
+    // Subheader
+    pdfContent.push({
+      text: 'Laboratory Test Results',
+      style: 'subheader',
+      margin: [0, 0, 0, 20]
     });
-    if (!visit) return null;
 
-    const completedStatuses = ['COMPLETED', 'CANCELLED'];
+    // Patient Information
+    pdfContent.push({
+      text: 'Patient Information',
+      style: 'sectionTitle'
+    });
 
-    // Keep compatibility placeholder batch orders in sync with linked LabTestOrder records.
-    for (const batch of (visit.batchOrders || [])) {
-      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
-      if (!hasLinkedLabTests) continue;
+    pdfContent.push({
+      columns: [
+        { text: `Name: ${patient.name}`, style: 'field' },
+        { text: `ID: ${patient.id}`, style: 'field' },
+        { text: `Gender: ${patient.gender || 'N/A'}`, style: 'field' }
+      ],
+      margin: [0, 0, 0, 5]
+    });
 
-      const hasPendingLabTests = batch.labTestOrders.some(
-        (order) => !completedStatuses.includes(order.status)
-      );
+    pdfContent.push({
+      columns: [
+        { text: `Age: ${patient.age || 'N/A'}`, style: 'field' },
+        { text: `Blood Type: ${patient.bloodType || 'N/A'}`, style: 'field' },
+        { text: `Phone: ${patient.mobile || 'N/A'}`, style: 'field' }
+      ],
+      margin: [0, 0, 0, 15]
+    });
 
-      if (!hasPendingLabTests && batch.status !== 'COMPLETED') {
-        await prisma.batchOrder.update({
-          where: { id: batch.id },
-          data: { status: 'COMPLETED' }
+    pdfContent.push({
+      text: `Order ID: ${orderId} | Date: ${formatDate(orderDate)} | Status: ${orderStatus.replace(/_/g, ' ')}`,
+      style: 'field',
+      margin: [0, 0, 0, 15]
+    });
+
+    // Results Section
+    pdfContent.push({
+      text: 'Laboratory Test Results',
+      style: 'sectionTitle'
+    });
+
+    // Add each test result
+    if (isWalkIn) {
+      walkInResults.forEach((result, index) => {
+        pdfContent.push({
+          text: `${index + 1}. ${result.serviceName}`,
+          style: 'testTitle',
+          margin: [0, 10, 0, 5]
         });
-        batch.status = 'COMPLETED';
-      }
-    }
 
-    const hasActiveLabOrders = visit.labOrders?.some(
-      (o) => !completedStatuses.includes(o.status)
-    );
-    const hasActiveRadiology = visit.radiologyOrders?.some(
-      (o) => !completedStatuses.includes(o.status)
-    );
-    const hasPendingLabBatch = (visit.batchOrders || []).some((batch) => {
-      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
-      const hasServices = Array.isArray(batch.services) && batch.services.length > 0;
+        if (result.template && result.template.fields) {
+          const tableBody = [];
+          Object.entries(result.template.fields).forEach(([fieldName, fieldConfig]) => {
+            const rawValue = result.results[fieldName];
+            const value = (rawValue === null || rawValue === undefined || rawValue === '' || String(rawValue).trim() === '') ? '-' : rawValue;
+            const unit = fieldConfig.unit ? ` (${fieldConfig.unit})` : '';
+            tableBody.push([
+              { text: fieldName + unit, style: 'tableHeader', bold: true },
+              { text: String(value), style: 'tableCell' }
+            ]);
+          });
 
-      if (hasLinkedLabTests) {
-        return batch.labTestOrders.some((order) => !completedStatuses.includes(order.status));
-      }
+          pdfContent.push({
+            table: {
+              headerRows: 0,
+              widths: ['*', '*'],
+              body: tableBody
+            },
+            margin: [0, 0, 0, 10]
+          });
+        } else {
+          const tableBody = [];
+          Object.entries(result.results).forEach(([key, rawValue]) => {
+            const value = (rawValue === null || rawValue === undefined || rawValue === '' || String(rawValue).trim() === '') ? '-' : rawValue;
+            tableBody.push([
+              { text: key, style: 'tableHeader', bold: true },
+              { text: String(value), style: 'tableCell' }
+            ]);
+          });
 
-      if (hasServices) {
-        return batch.services.some((service) => !completedStatuses.includes(service.status));
-      }
-
-      // Ignore empty placeholder LAB batch orders with no child records.
-      return false;
-    });
-
-    if (!hasActiveLabOrders && !hasPendingLabBatch && !hasActiveRadiology) {
-      return await prisma.visit.update({ where: { id: visitId }, data: { status: 'AWAITING_RESULTS_REVIEW', queueType: 'RESULTS_REVIEW' } });
-    } else if (!hasActiveLabOrders && !hasPendingLabBatch) {
-      return await prisma.visit.update({ where: { id: visitId }, data: { status: 'SENT_TO_RADIOLOGY' } });
-    }
-    return visit;
-  } catch (error) {
-    console.error(`Error checking/updating visit status for visit ${visitId}:`, error);
-  }
-}
-
-exports.getLabReports = async (req, res) => {
-  try {
-    const { startDate, endDate, technicianId, type } = req.query;
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    let start = startDate ? new Date(startDate) : today;
-    let end = endDate ? new Date(endDate) : tomorrow;
-    
-    if (type === 'monthly') {
-      start = new Date(today.getFullYear(), today.getMonth(), 1);
-      end = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
-    } else if (type === 'weekly') {
-      const dayOfWeek = today.getDay();
-      start = new Date(today);
-      start.setDate(today.getDate() - dayOfWeek);
-      end = new Date(start);
-      end.setDate(start.getDate() + 6, 23, 59, 59);
-    }
-
-    const labTestOrders = await prisma.labTestOrder.findMany({
-      where: { createdAt: { gte: start, lte: end } },
-      include: {
-        labTest: true,
-        patient: { select: { id: true, name: true, gender: true, dob: true } },
-        doctor: { select: { id: true, fullname: true } },
-        results: {
-          where: technicianId
-            ? {
-                OR: [
-                  { processedBy: technicianId },
-                  { verifiedBy: technicianId }
-                ]
-              }
-            : {}
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    const batchOrders = await prisma.batchOrder.findMany({
-      where: { type: 'LAB', createdAt: { gte: start, lte: end } },
-      include: {
-        patient: { select: { id: true, name: true, gender: true, dob: true } },
-        doctor: { select: { id: true, fullname: true } },
-        services: { include: { investigationType: true } },
-        detailedResults: {
-          where: technicianId ? { verifiedBy: technicianId } : {},
-          select: {
-            serviceId: true,
-            verifiedBy: true,
-            verifiedAt: true,
-            status: true
+          if (tableBody.length > 0) {
+            pdfContent.push({
+              table: {
+                headerRows: 0,
+                widths: ['*', '*'],
+                body: tableBody
+              },
+              margin: [0, 0, 0, 10]
+            });
           }
         }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
 
-    const users = await prisma.user.findMany({ where: { role: 'LAB_TECHNICIAN' }, select: { id: true, fullname: true, username: true } });
-    const userMap = {};
-    users.forEach(u => { userMap[u.id] = u.fullname || u.username || 'Unknown'; });
-
-    const processedTestOrders = labTestOrders.map(order => {
-      const processedById = order.results[0]?.processedBy || order.results[0]?.verifiedBy;
-      return {
-        id: order.id, type: 'LAB_TEST', testName: order.labTest?.name || 'Unknown Test', testCategory: order.labTest?.category || 'General',
-        patientId: order.patientId, patientName: order.patient?.name, doctorName: order.doctor?.fullname || 'Walk-in',
-        status: order.status, isWalkIn: order.isWalkIn, processedBy: processedById ? userMap[processedById] || 'Unknown' : null,
-        createdAt: order.createdAt, completedAt: order.results[0]?.verifiedAt || null
-      };
-    });
-
-    const processedBatchOrders = batchOrders.map(order => {
-      return (order.services || []).map(service => {
-        const matchingDetailedResult = (order.detailedResults || []).find((result) => result.serviceId === service.id) || order.detailedResults?.[0] || null;
-        const processedById = matchingDetailedResult?.verifiedBy || null;
-        const status = matchingDetailedResult?.status || service.status || order.status;
-
-        return {
-          id: `${order.id}-${service.id}`, type: 'BATCH_ORDER', testName: service.investigationType?.name || 'Unknown Test',
-          testCategory: service.investigationType?.category || 'General', patientId: order.patientId, patientName: order.patient?.name,
-          doctorName: order.doctor?.fullname || 'Unknown', status, isWalkIn: !!order.isWalkIn,
-          processedBy: processedById ? userMap[processedById] || 'Unknown' : null,
-          createdAt: order.createdAt, completedAt: matchingDetailedResult?.verifiedAt || (status === 'COMPLETED' ? order.updatedAt : null)
-        };
-      });
-    }).flat();
-
-    const allTests = [...processedTestOrders, ...processedBatchOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    const totalTests = allTests.length;
-    const walkInTests = allTests.filter(t => t.isWalkIn).length;
-    const regularTests = totalTests - walkInTests;
-    const completedTests = allTests.filter(t => t.status === 'COMPLETED').length;
-    const pendingTests = allTests.filter(t => t.status !== 'COMPLETED').length;
-
-    const byDate = {};
-    allTests.forEach(test => {
-      const dateKey = new Date(test.createdAt).toISOString().split('T')[0];
-      if (!byDate[dateKey]) byDate[dateKey] = { date: dateKey, total: 0, completed: 0, pending: 0, walkIn: 0, regular: 0 };
-      byDate[dateKey].total++;
-      if (test.isWalkIn) byDate[dateKey].walkIn++;
-      else byDate[dateKey].regular++;
-      if (test.status === 'COMPLETED') byDate[dateKey].completed++;
-      else byDate[dateKey].pending++;
-    });
-
-    const byCategory = {};
-    allTests.forEach(test => {
-      const cat = test.testCategory || 'Other';
-      if (!byCategory[cat]) byCategory[cat] = { category: cat, total: 0, completed: 0 };
-      byCategory[cat].total++;
-      if (test.status === 'COMPLETED') byCategory[cat].completed++;
-    });
-
-    const byTechnician = {};
-    allTests.forEach(test => {
-      if (test.processedBy) {
-        if (!byTechnician[test.processedBy]) byTechnician[test.processedBy] = { name: test.processedBy, total: 0, completed: 0 };
-        byTechnician[test.processedBy].total++;
-        if (test.status === 'COMPLETED') byTechnician[test.processedBy].completed++;
-      }
-    });
-
-    let financialSummary = null;
-    if (req.user.role === 'ADMIN') {
-      const walkInLabTestBillingIds = [...new Set(labTestOrders.filter(o => o.isWalkIn && o.billingId).map(o => o.billingId))];
-      const regularLabBillingIds = [...new Set(labTestOrders.filter(o => !o.isWalkIn && o.billingId).map(o => o.billingId))];
-      const walkInBatchBillingIds = [...new Set(batchOrders.filter(o => o.isWalkIn).flatMap(o => o.services?.map(s => s.billingId) || []).filter(Boolean))];
-      const regularBatchBillingIds = [...new Set(batchOrders.filter(o => !o.isWalkIn).flatMap(o => o.services?.map(s => s.billingId) || []).filter(Boolean))];
-      const walkInBillingIds = [...new Set([...walkInLabTestBillingIds, ...walkInBatchBillingIds])];
-      const regularBillingIds = [...new Set([...regularLabBillingIds, ...regularBatchBillingIds])];
-      const billingIds = [...new Set([...walkInBillingIds, ...regularBillingIds])];
-
-      const billings = await prisma.billing.findMany({ where: { id: { in: billingIds } } });
-      const walkInBillingIdSet = new Set(walkInBillingIds);
-      const regularBillingIdSet = new Set(regularBillingIds);
-
-      const totalRevenue = billings.filter(b => b.status === 'PAID').reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const pendingRevenue = billings.filter(b => b.status === 'PENDING').reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const walkInRevenue = billings
-        .filter(b => b.status === 'PAID' && walkInBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const regularRevenue = billings
-        .filter(b => b.status === 'PAID' && regularBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const walkInPendingRevenue = billings
-        .filter(b => b.status === 'PENDING' && walkInBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const regularPendingRevenue = billings
-        .filter(b => b.status === 'PENDING' && regularBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-
-      financialSummary = {
-        totalRevenue,
-        pendingRevenue,
-        paidCount: billings.filter(b => b.status === 'PAID').length,
-        pendingCount: billings.filter(b => b.status === 'PENDING').length,
-        walkInRevenue,
-        regularRevenue,
-        walkInPendingRevenue,
-        regularPendingRevenue,
-        walkInPaidCount: billings.filter(b => b.status === 'PAID' && walkInBillingIdSet.has(b.id)).length,
-        regularPaidCount: billings.filter(b => b.status === 'PAID' && regularBillingIdSet.has(b.id)).length,
-        walkInPendingCount: billings.filter(b => b.status === 'PENDING' && walkInBillingIdSet.has(b.id)).length,
-        regularPendingCount: billings.filter(b => b.status === 'PENDING' && regularBillingIdSet.has(b.id)).length
-      };
-    }
-
-    res.json({
-      period: { start, end, type },
-      summary: { totalTests, walkInTests, regularTests, completedTests, pendingTests },
-      byDate: Object.values(byDate).sort((a, b) => new Date(b.date) - new Date(a.date)),
-      byCategory: Object.values(byCategory).sort((a, b) => b.total - a.total),
-      byTechnician: Object.values(byTechnician).sort((a, b) => b.total - a.total),
-      tests: allTests, financialSummary
-    });
-  } catch (error) {
-    console.error('Error generating lab reports:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getTemplates = async (req, res) => {
-  try {
-    const templates = await prisma.labTestTemplate.findMany({
-      where: { isActive: true },
-      orderBy: { category: 'asc' }
-    });
-    res.json({ templates });
-  } catch (error) {
-    console.error('Error fetching lab templates:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getOrders = async (req, res) => {
-  try {
-    const { date, status } = req.query;
-    const where = {};
-
-    const pendingStatuses = ['PAID', 'QUEUED', 'IN_PROGRESS'];
-    const completedStatuses = ['COMPLETED'];
-    const allVisibleStatuses = [...pendingStatuses, ...completedStatuses];
-    const statusList = status === 'COMPLETED'
-      ? completedStatuses
-      : status === 'ALL'
-        ? allVisibleStatuses
-        : pendingStatuses;
-
-    const batchStatusClause = status === 'COMPLETED'
-      ? { status: { in: completedStatuses } }
-      : status === 'ALL'
-        ? {
-          OR: [
-            { status: { in: allVisibleStatuses } },
-            { status: 'UNPAID', visit: { isEmergency: true } }
-          ]
-        }
-        : {
-          OR: [
-            { status: { in: pendingStatuses } },
-            { status: 'UNPAID', visit: { isEmergency: true } }
-          ]
-        };
-    
-    if (date) {
-      const startOfDay = new Date(date);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(date);
-      endOfDay.setHours(23, 59, 59, 999);
-      where.createdAt = {
-        gte: startOfDay,
-        lte: endOfDay
-      };
-    }
-
-    const [batchOrders, walkInOrdersRaw, labTestOrdersRaw] = await Promise.all([
-      prisma.batchOrder.findMany({
-        where: { type: 'LAB', ...batchStatusClause, ...where },
-        include: { patient: true, services: { include: { investigationType: true } } },
-        orderBy: { createdAt: 'desc' }
-      }),
-      prisma.labOrder.findMany({
-        where: {
-          isWalkIn: true,
-          status: { in: statusList },
-          billingId: { not: null },
-          ...where
-        },
-        include: { patient: true, type: true, labResults: true },
-        orderBy: { createdAt: 'desc' }
-      }),
-      prisma.labTestOrder.findMany({
-        where: {
-          status: { in: statusList },
-          OR: [{ isWalkIn: false }, { isWalkIn: true, billingId: { not: null } }],
-          ...where
-        },
-        include: {
-          labTest: { include: { resultFields: { orderBy: { displayOrder: 'asc' } } } },
-          patient: true,
-          doctor: true,
-          results: true
-        },
-        orderBy: { createdAt: 'desc' }
-      })
-    ]);
-
-    const billingIds = [...new Set([
-      ...walkInOrdersRaw.map((order) => order.billingId).filter(Boolean),
-      ...labTestOrdersRaw.filter((order) => order.isWalkIn).map((order) => order.billingId).filter(Boolean)
-    ])];
-
-    const paidBillingIds = billingIds.length
-      ? new Set(
-        (await prisma.billing.findMany({
-          where: {
-            id: { in: billingIds },
-            status: 'PAID'
-          },
-          select: { id: true }
-        })).map((billing) => billing.id)
-      )
-      : new Set();
-
-    const walkInOrders = walkInOrdersRaw.filter((order) => paidBillingIds.has(order.billingId));
-    const labTestOrders = labTestOrdersRaw.filter((order) => !order.isWalkIn || (order.billingId && paidBillingIds.has(order.billingId)));
-
-    const labTestLinkedBatchIds = new Set(
-      labTestOrders.map((order) => order.batchOrderId).filter(Boolean)
-    );
-    const labTestLinkedVisitIds = new Set(
-      labTestOrders.map((order) => order.visitId).filter(Boolean)
-    );
-
-    const filteredBatchOrders = batchOrders.filter((order) => {
-      const hasServices = Array.isArray(order.services) && order.services.length > 0;
-      const linkedByBatchId = labTestLinkedBatchIds.has(order.id);
-      const linkedByVisitId = Boolean(order.visitId) && labTestLinkedVisitIds.has(order.visitId);
-      const looksLikeTemplatePlaceholder = /lab tests ordered by doctor/i.test(order.instructions || '');
-
-      if (!hasServices && (linkedByBatchId || linkedByVisitId || looksLikeTemplatePlaceholder)) {
-        return false;
-      }
-      return true;
-    });
-
-    res.json({ batchOrders: filteredBatchOrders, walkInOrders, labTestOrders });
-  } catch (error) {
-    console.error('Error fetching lab orders:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const saveIndividualLabResult = async (req, res) => {
-  try {
-    const { labOrderId, serviceId, templateId, results, additionalNotes } = req.body;
-    const labTechnicianId = req.user.id;
-    const validated = individualLabResultSchema.parse(req.body);
-
-    const existingResult = await prisma.labResult.findFirst({
-      where: { orderId: validated.labOrderId, testTypeId: validated.serviceId }
-    });
-
-    let result;
-    if (existingResult) {
-      result = await prisma.labResult.update({
-        where: { id: existingResult.id },
-        data: {
-          resultText: JSON.stringify(validated.results),
-          additionalNotes: validated.additionalNotes || null,
-          status: 'COMPLETED',
-          verifiedBy: labTechnicianId,
-          verifiedAt: new Date()
+        if (result.additionalNotes) {
+          pdfContent.push({
+            text: `Notes: ${result.additionalNotes}`,
+            style: 'notes',
+            margin: [0, 0, 0, 10]
+          });
         }
       });
     } else {
-      result = await prisma.labResult.create({
-        data: {
-          orderId: validated.labOrderId,
-          testTypeId: validated.serviceId,
-          resultText: JSON.stringify(validated.results),
-          additionalNotes: validated.additionalNotes || null,
-          status: 'COMPLETED',
-          verifiedBy: labTechnicianId,
-          verifiedAt: new Date()
-        }
-      });
-    }
-
-    res.json({ success: true, result });
-  } catch (error) {
-    console.error('Error saving lab result:', error);
-    if (error.name === 'ZodError') return res.status(400).json({ error: error.errors });
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const getDetailedResults = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const batchOrder = await prisma.batchOrder.findUnique({
-      where: { id: parseInt(orderId) },
-      include: { patient: true, services: { include: { investigationType: true } }, detailedResults: { include: { template: true } }, doctor: { select: { fullname: true } } }
-    });
-
-    if (batchOrder) return res.json({ order: batchOrder, isWalkIn: false });
-
-    const walkInOrder = await prisma.labOrder.findUnique({
-      where: { id: parseInt(orderId) },
-      include: { patient: true, type: true, labResults: { include: { testType: true } } }
-    });
-
-    if (walkInOrder) return res.json({ order: walkInOrder, isWalkIn: true });
-    res.status(404).json({ error: 'Order not found' });
-  } catch (error) {
-    console.error('Error fetching detailed results:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const sendToDoctor = async (req, res) => {
-  try {
-    const { labOrderId } = req.params;
-    const labTechnicianId = req.user.id;
-    const orderId = parseInt(labOrderId);
-
-    let batchOrder = await prisma.batchOrder.findUnique({ where: { id: orderId }, include: { visit: true } });
-
-    if (!batchOrder) {
-      const walkInOrder = await prisma.labOrder.findUnique({ where: { id: orderId } });
-      if (walkInOrder && walkInOrder.isWalkIn) {
-        await prisma.labOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
-        return res.json({ message: 'Lab results sent to doctor successfully', batchOrderId: orderId, visitStatus: 'COMPLETED' });
-      }
-    }
-
-    if (!batchOrder) return res.status(404).json({ error: 'Lab order not found' });
-
-    await prisma.batchOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
-
-    let updatedVisit;
-    if (batchOrder.visitId) {
-      updatedVisit = await checkAndUpdateVisitStatus(batchOrder.visitId);
-    }
-
-    res.json({ message: 'Lab results sent to doctor successfully', batchOrderId: orderId, visitStatus: updatedVisit?.status || 'IN_DOCTOR_QUEUE' });
-  } catch (error) {
-    console.error('Error sending lab results to doctor:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const updateLabOrderStatus = async (req, res) => {
-  try {
-    const { labOrderId } = req.params;
-    const { status } = req.body;
-    const updatedOrder = await prisma.labOrder.update({ where: { id: parseInt(labOrderId) }, data: { status } });
-    res.json({ success: true, order: updatedOrder });
-  } catch (error) {
-    console.error('Error updating lab order status:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const generateLabResultsPDF = async (req, res) => {
-  try {
-    const { batchOrderId } = req.params;
-    const orderId = parseInt(batchOrderId);
-
-    let batchOrder = await prisma.batchOrder.findUnique({
-      where: { id: orderId },
-      include: { patient: true, services: { include: { investigationType: true } }, detailedResults: { include: { template: true } }, doctor: { select: { fullname: true } } }
-    });
-
-    let isWalkIn = false;
-    let walkInOrder = null;
-
-    if (!batchOrder) {
-      walkInOrder = await prisma.labOrder.findUnique({ where: { id: orderId }, include: { patient: true, type: true, labResults: { include: { testType: true } } } });
-      if (!walkInOrder) return res.status(404).json({ error: 'Lab order not found' });
-      if (!walkInOrder.isWalkIn) return res.status(400).json({ error: 'This endpoint only supports batch orders and walk-in orders' });
-      isWalkIn = true;
-    }
-
-    const formatDateTime = (date) => new Date(date).toLocaleString('en-US');
-    const patient = batchOrder?.patient || walkInOrder?.patient;
-    const orderDate = batchOrder?.createdAt || walkInOrder?.createdAt;
-    const orderStatus = batchOrder?.status || walkInOrder?.status;
-
-    if (patient?.dob) {
-      const today = new Date();
-      const birthDate = new Date(patient.dob);
-      patient.age = Math.floor((today - birthDate) / (365.25 * 24 * 60 * 60 * 1000));
-    }
-
-    const pdfContent = [];
-    pdfContent.push({ text: 'Laboratory Test Results', style: 'subheader', margin: [0, 0, 0, 20] });
-    pdfContent.push({ text: 'Patient Information', style: 'sectionTitle' });
-    pdfContent.push({ columns: [{ text: `Name: ${patient.name}`, style: 'field' }, { text: `ID: ${patient.id}`, style: 'field' }, { text: `Gender: ${patient.gender || 'N/A'}`, style: 'field' }], margin: [0, 0, 0, 5] });
-    pdfContent.push({ columns: [{ text: `Age: ${patient.age || 'N/A'}`, style: 'field' }, { text: `Blood Type: ${patient.bloodType || 'N/A'}`, style: 'field' }, { text: `Phone: ${patient.mobile || 'N/A'}`, style: 'field' }], margin: [0, 0, 0, 15] });
-    pdfContent.push({ text: `Order ID: ${batchOrderId} | Date: ${formatDateTime(orderDate)} | Status: ${orderStatus?.replace(/_/g, ' ') || 'N/A'}`, style: 'field', margin: [0, 0, 0, 15] });
-    pdfContent.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 0, 0, 15] });
-    pdfContent.push({ text: 'Laboratory Test Results', style: 'sectionTitle' });
-
-    if (!isWalkIn && batchOrder?.detailedResults) {
       batchOrder.detailedResults.forEach((result, index) => {
-        pdfContent.push({ text: `${index + 1}. ${result.template?.name || 'Test'}`, style: 'testTitle', margin: [0, 10, 0, 5] });
-        if (result.results && Object.keys(result.results).length > 0) {
+        const service = batchOrder.services.find(s => s.id === result.serviceId);
+        const serviceName = service?.service?.name || 'Unknown Test';
+
+        pdfContent.push({
+          text: `${index + 1}. ${serviceName}`,
+          style: 'testTitle',
+          margin: [0, 10, 0, 5]
+        });
+
+        if (result.template && result.template.fields) {
           const tableBody = [];
-          Object.entries(result.results).forEach(([key, value]) => tableBody.push([key, String(value || '-')]));
-          pdfContent.push({ table: { headerRows: 1, widths: ['*', '*'], body: tableBody }, layout: 'lightHorizontalLines', margin: [0, 5, 0, 10] });
+          Object.entries(result.template.fields).forEach(([fieldName, fieldConfig]) => {
+            const rawValue = result.results[fieldName];
+            const value = (rawValue === null || rawValue === undefined || rawValue === '' || String(rawValue).trim() === '') ? '-' : rawValue;
+            const unit = fieldConfig.unit ? ` (${fieldConfig.unit})` : '';
+            tableBody.push([
+              { text: fieldName + unit, style: 'tableHeader', bold: true },
+              { text: String(value), style: 'tableCell' }
+            ]);
+          });
+
+          pdfContent.push({
+            table: {
+              headerRows: 0,
+              widths: ['*', '*'],
+              body: tableBody
+            },
+            margin: [0, 0, 0, 10]
+          });
         }
-        if (result.additionalNotes) pdfContent.push({ text: `Notes: ${result.additionalNotes}`, style: 'notes', margin: [0, 5, 0, 15] });
+
+        if (result.additionalNotes) {
+          pdfContent.push({
+            text: `Notes: ${result.additionalNotes}`,
+            style: 'notes',
+            margin: [0, 0, 0, 10]
+          });
+        }
       });
     }
 
-    pdfContent.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 20, 0, 10] });
-    pdfContent.push({ text: 'Generated by lab technician', style: 'footer', alignment: 'right' });
+    // Add signature section
+    pdfContent.push({
+      text: 'Lab Technician:',
+      style: 'signatureLabel',
+      margin: [0, 20, 0, 5]
+    });
+    pdfContent.push({
+      text: labTechnician?.fullname || 'Lab Technician',
+      style: 'signatureName',
+      margin: [0, 0, 0, 10]
+    });
 
-    const docDefinition = {
+    // Create PDF document using utility
+    const docDefinition = createPDFDocument({
+      paperSize: 'A4',
+      clinicName: 'Selihom Medical Clinic',
       content: pdfContent,
-      styles: {
-        subheader: { fontSize: 18, bold: true, margin: [0, 0, 0, 10] },
-        sectionTitle: { fontSize: 14, bold: true, margin: [0, 10, 0, 5] },
-        field: { fontSize: 10, margin: [0, 2, 0, 2] },
-        testTitle: { fontSize: 12, bold: true },
-        resultText: { fontSize: 10 },
-        notes: { fontSize: 10, italics: true },
-        footer: { fontSize: 8, color: 'gray' }
-      }
-    };
+      includeLogo: true,
+      footerText: `Generated on: ${formatDateTime(new Date())}`
+    });
 
+    // Generate PDF
     const fileName = `lab-results-${orderId}-${Date.now()}.pdf`;
     const filePath = `uploads/${fileName}`;
+
+    console.log(`🧪 [Lab PDF] Generating PDF for order ${orderId}...`);
     await generatePDF(docDefinition, filePath);
+    console.log(`✅ [Lab PDF] PDF generated successfully: ${filePath}`);
+
     res.sendFile(path.resolve(filePath));
   } catch (error) {
     console.error('Error generating lab results PDF:', error);
@@ -857,333 +1056,245 @@ const generateLabResultsPDF = async (req, res) => {
   }
 };
 
-async function checkAndUpdateVisitStatus(visitId) {
+// ============================================
+// NEW LAB TEST SYSTEM - Save Results
+// ============================================
+
+// Save lab test result (new system)
+exports.saveLabTestResult = async (req, res) => {
   try {
-    const visit = await prisma.visit.findUnique({
-      where: { id: visitId },
-      include: {
-        labOrders: true,
-        radiologyOrders: true,
-        batchOrders: {
-          where: { type: 'LAB' },
-          include: {
-            services: { select: { status: true } },
-            labTestOrders: { select: { status: true } }
-          }
-        }
-      }
-    });
-    if (!visit) return null;
-
-    const completedStatuses = ['COMPLETED', 'CANCELLED'];
-
-    // Keep compatibility placeholder batch orders in sync with linked LabTestOrder records.
-    for (const batch of (visit.batchOrders || [])) {
-      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
-      if (!hasLinkedLabTests) continue;
-
-      const hasPendingLabTests = batch.labTestOrders.some(
-        (order) => !completedStatuses.includes(order.status)
-      );
-
-      if (!hasPendingLabTests && batch.status !== 'COMPLETED') {
-        await prisma.batchOrder.update({
-          where: { id: batch.id },
-          data: { status: 'COMPLETED' }
-        });
-        batch.status = 'COMPLETED';
-      }
-    }
-
-    const hasActiveLabOrders = visit.labOrders?.some(
-      (o) => !completedStatuses.includes(o.status)
-    );
-    const hasActiveRadiology = visit.radiologyOrders?.some(
-      (o) => !completedStatuses.includes(o.status)
-    );
-    const hasPendingLabBatch = (visit.batchOrders || []).some((batch) => {
-      const hasLinkedLabTests = Array.isArray(batch.labTestOrders) && batch.labTestOrders.length > 0;
-      const hasServices = Array.isArray(batch.services) && batch.services.length > 0;
-
-      if (hasLinkedLabTests) {
-        return batch.labTestOrders.some((order) => !completedStatuses.includes(order.status));
-      }
-
-      if (hasServices) {
-        return batch.services.some((service) => !completedStatuses.includes(service.status));
-      }
-
-      // Ignore empty placeholder LAB batch orders with no child records.
-      return false;
-    });
-
-    if (!hasActiveLabOrders && !hasPendingLabBatch && !hasActiveRadiology) {
-      return await prisma.visit.update({ where: { id: visitId }, data: { status: 'AWAITING_RESULTS_REVIEW', queueType: 'RESULTS_REVIEW' } });
-    } else if (!hasActiveLabOrders && !hasPendingLabBatch) {
-      return await prisma.visit.update({ where: { id: visitId }, data: { status: 'SENT_TO_RADIOLOGY' } });
-    }
-    return visit;
-  } catch (error) {
-    console.error(`Error checking/updating visit status for visit ${visitId}:`, error);
-  }
-}
-
-const getLabReports = async (req, res) => {
-  try {
-    const { startDate, endDate, technicianId, type } = req.query;
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    let start = startDate ? new Date(startDate) : today;
-    let end = endDate ? new Date(endDate) : tomorrow;
-    
-    if (type === 'monthly') {
-      start = new Date(today.getFullYear(), today.getMonth(), 1);
-      end = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
-    } else if (type === 'weekly') {
-      const dayOfWeek = today.getDay();
-      start = new Date(today);
-      start.setDate(today.getDate() - dayOfWeek);
-      end = new Date(start);
-      end.setDate(start.getDate() + 6, 23, 59, 59);
-    }
-
-    const labTestOrders = await prisma.labTestOrder.findMany({
-      where: { createdAt: { gte: start, lte: end } },
-      include: {
-        labTest: true,
-        patient: { select: { id: true, name: true, gender: true, dob: true } },
-        doctor: { select: { id: true, fullname: true } },
-        results: {
-          where: technicianId
-            ? {
-                OR: [
-                  { processedBy: technicianId },
-                  { verifiedBy: technicianId }
-                ]
-              }
-            : {}
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    const batchOrders = await prisma.batchOrder.findMany({
-      where: { type: 'LAB', createdAt: { gte: start, lte: end } },
-      include: {
-        patient: { select: { id: true, name: true, gender: true, dob: true } },
-        doctor: { select: { id: true, fullname: true } },
-        services: { include: { investigationType: true } },
-        detailedResults: {
-          where: technicianId ? { verifiedBy: technicianId } : {},
-          select: {
-            serviceId: true,
-            verifiedBy: true,
-            verifiedAt: true,
-            status: true
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    const users = await prisma.user.findMany({ where: { role: 'LAB_TECHNICIAN' }, select: { id: true, fullname: true, username: true } });
-    const userMap = {};
-    users.forEach(u => { userMap[u.id] = u.fullname || u.username || 'Unknown'; });
-
-    const processedTestOrders = labTestOrders.map(order => {
-      const processedBy = order.results[0]?.processedBy || order.results[0]?.verifiedBy;
-      return {
-        id: order.id, type: 'LAB_TEST', testName: order.labTest?.name || 'Unknown Test', testCategory: order.labTest?.category || 'General',
-        patientId: order.patientId, patientName: order.patient?.name, doctorName: order.doctor?.fullname || 'Walk-in',
-        status: order.status, isWalkIn: order.isWalkIn, processedBy: processedBy ? userMap[processedBy] || 'Unknown' : null,
-        createdAt: order.createdAt, completedAt: order.results[0]?.verifiedAt || null
-      };
-    });
-
-    const processedBatchOrders = batchOrders.map(order => {
-      return (order.services || []).map(service => {
-        const matchingDetailedResult = (order.detailedResults || []).find((result) => result.serviceId === service.id) || order.detailedResults?.[0] || null;
-        const processedBy = matchingDetailedResult?.verifiedBy || null;
-        const status = matchingDetailedResult?.status || service.status || order.status;
-
-        return {
-          id: `${order.id}-${service.id}`, type: 'BATCH_ORDER', testName: service.investigationType?.name || 'Unknown Test',
-          testCategory: service.investigationType?.category || 'General', patientId: order.patientId, patientName: order.patient?.name,
-          doctorName: order.doctor?.fullname || 'Unknown', status, isWalkIn: !!order.isWalkIn,
-          processedBy: processedBy ? userMap[processedBy] || 'Unknown' : null,
-          createdAt: order.createdAt, completedAt: matchingDetailedResult?.verifiedAt || (status === 'COMPLETED' ? order.updatedAt : null)
-        };
-      });
-    }).flat();
-
-    const allTests = [...processedTestOrders, ...processedBatchOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    const totalTests = allTests.length;
-    const walkInTests = allTests.filter(t => t.isWalkIn).length;
-    const regularTests = totalTests - walkInTests;
-    const completedTests = allTests.filter(t => t.status === 'COMPLETED').length;
-    const pendingTests = allTests.filter(t => t.status !== 'COMPLETED').length;
-
-    const byDate = {};
-    allTests.forEach(test => {
-      const dateKey = new Date(test.createdAt).toISOString().split('T')[0];
-      if (!byDate[dateKey]) byDate[dateKey] = { date: dateKey, total: 0, completed: 0, pending: 0, walkIn: 0, regular: 0 };
-      byDate[dateKey].total++;
-      if (test.isWalkIn) byDate[dateKey].walkIn++;
-      else byDate[dateKey].regular++;
-      if (test.status === 'COMPLETED') byDate[dateKey].completed++;
-      else byDate[dateKey].pending++;
-    });
-
-    const byCategory = {};
-    allTests.forEach(test => {
-      const cat = test.testCategory || 'Other';
-      if (!byCategory[cat]) byCategory[cat] = { category: cat, total: 0, completed: 0 };
-      byCategory[cat].total++;
-      if (test.status === 'COMPLETED') byCategory[cat].completed++;
-    });
-
-    const byTechnician = {};
-    allTests.forEach(test => {
-      if (test.processedBy) {
-        if (!byTechnician[test.processedBy]) byTechnician[test.processedBy] = { name: test.processedBy, total: 0, completed: 0 };
-        byTechnician[test.processedBy].total++;
-        if (test.status === 'COMPLETED') byTechnician[test.processedBy].completed++;
-      }
-    });
-
-    let financialSummary = null;
-    if (req.user.role === 'ADMIN') {
-      const walkInLabTestBillingIds = [...new Set(labTestOrders.filter(o => o.isWalkIn && o.billingId).map(o => o.billingId))];
-      const regularLabBillingIds = [...new Set(labTestOrders.filter(o => !o.isWalkIn && o.billingId).map(o => o.billingId))];
-      const walkInBatchBillingIds = [...new Set(batchOrders.filter(o => o.isWalkIn).flatMap(o => o.services?.map(s => s.billingId) || []).filter(Boolean))];
-      const regularBatchBillingIds = [...new Set(batchOrders.filter(o => !o.isWalkIn).flatMap(o => o.services?.map(s => s.billingId) || []).filter(Boolean))];
-      const walkInBillingIds = [...new Set([...walkInLabTestBillingIds, ...walkInBatchBillingIds])];
-      const regularBillingIds = [...new Set([...regularLabBillingIds, ...regularBatchBillingIds])];
-      const billingIds = [...new Set([...walkInBillingIds, ...regularBillingIds])];
-
-      const billings = await prisma.billing.findMany({ where: { id: { in: billingIds } } });
-      const walkInBillingIdSet = new Set(walkInBillingIds);
-      const regularBillingIdSet = new Set(regularBillingIds);
-
-      const totalRevenue = billings.filter(b => b.status === 'PAID').reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const pendingRevenue = billings.filter(b => b.status === 'PENDING').reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const walkInRevenue = billings
-        .filter(b => b.status === 'PAID' && walkInBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const regularRevenue = billings
-        .filter(b => b.status === 'PAID' && regularBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const walkInPendingRevenue = billings
-        .filter(b => b.status === 'PENDING' && walkInBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-      const regularPendingRevenue = billings
-        .filter(b => b.status === 'PENDING' && regularBillingIdSet.has(b.id))
-        .reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-
-      financialSummary = {
-        totalRevenue,
-        pendingRevenue,
-        paidCount: billings.filter(b => b.status === 'PAID').length,
-        pendingCount: billings.filter(b => b.status === 'PENDING').length,
-        walkInRevenue,
-        regularRevenue,
-        walkInPendingRevenue,
-        regularPendingRevenue,
-        walkInPaidCount: billings.filter(b => b.status === 'PAID' && walkInBillingIdSet.has(b.id)).length,
-        regularPaidCount: billings.filter(b => b.status === 'PAID' && regularBillingIdSet.has(b.id)).length,
-        walkInPendingCount: billings.filter(b => b.status === 'PENDING' && walkInBillingIdSet.has(b.id)).length,
-        regularPendingCount: billings.filter(b => b.status === 'PENDING' && regularBillingIdSet.has(b.id)).length
-      };
-    }
-
-    res.json({
-      period: { start, end, type },
-      summary: { totalTests, walkInTests, regularTests, completedTests, pendingTests },
-      byDate: Object.values(byDate).sort((a, b) => new Date(b.date) - new Date(a.date)),
-      byCategory: Object.values(byCategory).sort((a, b) => b.total - a.total),
-      byTechnician: Object.values(byTechnician).sort((a, b) => b.total - a.total),
-      tests: allTests, financialSummary
-    });
-  } catch (error) {
-    console.error('Error generating lab reports:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const saveLabTestResult = async (req, res) => {
-  try {
-    const { orderId, labTestId, results, additionalNotes, finalize = true } = req.body;
+    const { orderId, labTestId, results, additionalNotes } = req.body;
     const labTechnicianId = req.user.id;
-    const requestedFinalize = !(finalize === false || finalize === 'false');
 
     if (!orderId) {
       return res.status(400).json({ error: 'orderId is required' });
     }
 
-    const order = await prisma.labTestOrder.findUnique({ where: { id: orderId } });
+    // Results can be empty object (all fields optional)
+    if (results === undefined) {
+      return res.status(400).json({ error: 'results object is required (can be empty)' });
+    }
+
+    // Get the lab test order
+    const order = await prisma.labTestOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        labTest: {
+          include: {
+            resultFields: {
+              orderBy: { displayOrder: 'asc' }
+            }
+          }
+        },
+        patient: true
+      }
+    });
+
     if (!order) {
       return res.status(404).json({ error: 'Lab test order not found' });
     }
 
-    const existingResult = await prisma.labTestResult.findUnique({
-      where: { orderId_testId: { orderId, testId: order.labTestId } }
-    });
+    // All fields are now optional - no validation needed
+    // Technicians can skip any field they want
 
-    const shouldFinalize = requestedFinalize || existingResult?.status === 'COMPLETED';
-    const targetStatus = shouldFinalize ? 'COMPLETED' : 'IN_PROGRESS';
+    // Check if result already exists
+    const existingResult = await prisma.labTestResult.findUnique({
+      where: {
+        orderId_testId: {
+          orderId: orderId,
+          testId: order.labTestId
+        }
+      }
+    });
 
     let result;
     if (existingResult) {
+      // Update existing result
       result = await prisma.labTestResult.update({
         where: { id: existingResult.id },
         data: {
           results: results,
           additionalNotes: additionalNotes || null,
-          processedBy: labTechnicianId,
-          verifiedBy: shouldFinalize ? labTechnicianId : null,
-          verifiedAt: shouldFinalize ? new Date() : null,
-          status: targetStatus
+          verifiedBy: labTechnicianId,
+          verifiedAt: new Date(),
+          status: 'COMPLETED'
         },
-        include: { test: { include: { resultFields: true } } }
+        include: {
+          test: {
+            include: {
+              resultFields: true
+            }
+          }
+        }
       });
     } else {
+      // Create new result
       result = await prisma.labTestResult.create({
         data: {
           orderId: orderId,
           testId: order.labTestId,
           results: results,
           additionalNotes: additionalNotes || null,
-          processedBy: labTechnicianId,
-          verifiedBy: shouldFinalize ? labTechnicianId : null,
-          verifiedAt: shouldFinalize ? new Date() : null,
-          status: targetStatus
+          verifiedBy: labTechnicianId,
+          verifiedAt: new Date(),
+          status: 'COMPLETED'
         },
-        include: { test: { include: { resultFields: true } } }
+        include: {
+          test: {
+            include: {
+              resultFields: true
+            }
+          }
+        }
       });
     }
 
-    if (shouldFinalize) {
-      await prisma.labTestOrder.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
+    // Update order status
+    await prisma.labTestOrder.update({
+      where: { id: orderId },
+      data: { status: 'COMPLETED' }
+    });
 
-      if (order.visitId) {
-        await checkAndUpdateVisitStatus(order.visitId);
+    // Check if this test belongs to a parent batch order
+    if (order.batchOrderId) {
+      const parentBatch = await prisma.batchOrder.findUnique({
+        where: { id: order.batchOrderId },
+        include: {
+          services: true,
+          labTestOrders: true
+        }
+      });
+
+      if (parentBatch) {
+        // Check if ALL components of the batch are done
+        const allOldServicesDone = parentBatch.services.every(s => s.status === 'COMPLETED');
+        const allNewLabTestsDone = parentBatch.labTestOrders.every(lt => lt.status === 'COMPLETED');
+
+        if (allOldServicesDone && allNewLabTestsDone) {
+          await prisma.batchOrder.update({
+            where: { id: order.batchOrderId },
+            data: { status: 'COMPLETED' }
+          });
+          console.log(`✅ Parent batch order ${order.batchOrderId} marked as COMPLETED`);
+        }
       }
-    } else if (order.status !== 'COMPLETED') {
-      await prisma.labTestOrder.update({ where: { id: orderId }, data: { status: 'IN_PROGRESS' } });
     }
 
-    res.json({ success: true, result, finalized: shouldFinalize });
+    // Check and update visit status
+    if (order.visitId) {
+      await checkAndUpdateVisitStatus(order.visitId);
+    }
+
+    res.json({
+      message: 'Lab test result saved successfully',
+      result
+    });
+
   } catch (error) {
     console.error('Error saving lab test result:', error);
     res.status(500).json({ error: error.message });
   }
 };
 
-module.exports = {
-  getTemplates, getOrders, saveIndividualLabResult, getDetailedResults,
-  sendToDoctor, updateLabOrderStatus, generateLabResultsPDF, getLabReports, saveLabTestResult
-};
+// Helper function to check if all lab orders are completed and update visit status
+async function checkAndUpdateVisitStatus(visitId) {
+  if (!visitId) return;
+
+  try {
+    const activeStatuses = ['PAID', 'QUEUED', 'IN_PROGRESS'];
+
+    // 1. Check for active lab orders across ALL systems
+    const activeLabTestOrders = await prisma.labTestOrder.count({
+      where: {
+        visitId: visitId,
+        status: { in: activeStatuses }
+      }
+    });
+
+    const activeOldLabOrders = await prisma.labOrder.count({
+      where: {
+        visitId: visitId,
+        status: { in: activeStatuses }
+      }
+    });
+
+    // For batch orders, we need to be careful with MIXED types
+    const pendingBatchOrders = await prisma.batchOrder.findMany({
+      where: {
+        visitId: visitId,
+        status: { in: ['UNPAID', 'PAID', 'QUEUED', 'IN_PROGRESS'] }
+      },
+      include: {
+        services: true
+      }
+    });
+
+    // A batch order is an "active lab order" if:
+    // - It's type LAB and status is active (PAID, etc)
+    // - It's type MIXED and has at least one active lab service
+    const hasActiveLabBatchOrders = pendingBatchOrders.some(order => {
+      if (order.type === 'LAB' && activeStatuses.includes(order.status)) return true;
+      if (order.type === 'MIXED') {
+        return order.services.some(s =>
+          (s.investigationType?.category === 'LAB' || s.service?.code?.startsWith('LAB_')) &&
+          activeStatuses.includes(s.status)
+        );
+      }
+      return false;
+    });
+
+    const hasActiveLabOrders = activeLabTestOrders > 0 || activeOldLabOrders > 0 || hasActiveLabBatchOrders;
+
+    if (!hasActiveLabOrders) {
+      // 2. All lab orders are completed, now check radiology
+      const activeOldRadiologyOrders = await prisma.radiologyOrder.count({
+        where: {
+          visitId: visitId,
+          status: { in: activeStatuses }
+        }
+      });
+
+      const hasActiveRadiologyBatchOrders = pendingBatchOrders.some(order => {
+        if (order.type === 'RADIOLOGY' && activeStatuses.includes(order.status)) return true;
+        if (order.type === 'MIXED') {
+          return order.services.some(s =>
+            (s.investigationType?.category === 'RADIOLOGY' || s.service?.code?.startsWith('RAD_')) &&
+            activeStatuses.includes(s.status)
+          );
+        }
+        return false;
+      });
+
+      const hasActiveRadiologyOrders = activeOldRadiologyOrders > 0 || hasActiveRadiologyBatchOrders;
+
+      // 3. Update visit status based on remaining investigations
+      const visit = await prisma.visit.findUnique({
+        where: { id: visitId },
+        select: { status: true, isEmergency: true }
+      });
+
+      if (visit && ['SENT_TO_LAB', 'SENT_TO_RADIOLOGY', 'SENT_TO_BOTH'].includes(visit.status)) {
+        if (!hasActiveRadiologyOrders) {
+          // Both Lab and Radiology are done (or not active)
+          await prisma.visit.update({
+            where: { id: visitId },
+            data: {
+              status: 'AWAITING_RESULTS_REVIEW',
+              queueType: 'RESULTS_REVIEW'
+            }
+          });
+          console.log(`✅ Updated visit ${visitId} status to AWAITING_RESULTS_REVIEW (all active investigations completed)`);
+        } else {
+          // Lab is done, but Radiology is still active
+          await prisma.visit.update({
+            where: { id: visitId },
+            data: { status: 'SENT_TO_RADIOLOGY' }
+          });
+          console.log(`✅ Updated visit ${visitId} status to SENT_TO_RADIOLOGY (lab completed, radiology pending)`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`Error checking/updating visit status for visit ${visitId}:`, error);
+  }
+}
